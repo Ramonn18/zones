@@ -22,6 +22,15 @@ How it works: the six pins are just enough to work out the projector as a lens l
 
 **Step 2, the experience: a pirate hunt on a chalk-line mural** (the **Pirate hunt** button). In the style of a white-line doodle mural on a black wall, the corner shows a pirate world: a compass, a ship, an island, the Kraken and a treasure chest, among small doodles (clouds, stars, anchor, telescope, lighthouse, parrot, mermaid, waves). Black is no light, so only the drawings shine. Touch the compass, and a dotted trail draws itself to the next scene: ship, island, the Kraken, then the treasure. Each scene celebrates when it's reached. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.
 
+**Running the show.** The corner page is the control desk for the projection:
+- **Blackout** (B) darkens the projector at once; the preview keeps showing the picture, dimmed.
+- **Brightness** and **soft edges**: soft edges fade the picture's outer border, so the projector's glow doesn't end in a hard line on the wall.
+- **Test patterns** for the full picture: a grid for focus and coverage, white for brightness, and color bars.
+- **Undo and redo** for the fit (⌘Z, ⇧⌘Z). Tab picks a pin, and the arrows nudge it while its position shows in projector pixels.
+- **Hunt controls:** back, pause, skip and start over (`[` `P` `]` `R`).
+- **Setups** (the fit, the walls' sizes, the output settings and the mode) can be saved by name, or to a JSON file. Zones.app saves these files in `setups/`.
+- The projector window's frame rate shows next to its resolution. Keys 1 to 4 switch modes, and the Keyboard section lists all the shortcuts.
+
 **Working without the projector: the simulated room.** **Simulate the room** on the corner page (or `corner.html?sim`) opens Room 1 in 3D. The projector sits on its box in the southwest corner and shines the real projector picture into the northeast corner. The iPhone is on top of it, and a **Room view** shows a player's eyes. Click and hold on the wall in the Room view to touch it, as a hand would; the hunt reacts. The **Camera** panel shows what the iPhone would see. **Fit pins to the simulated corner** works out the exact six pins from the room's geometry. With them, every point lands exactly where the projector puts it, and the status shows how far off any other pins are. The setup's measurements are estimates in `web/src/room1.js`: the projector's position, aim and throw ratio, and how high the projected area starts.
 
 The illustrations come from libraries, drawn hand-sketched and gently wobbling with [Rough.js](https://roughjs.com) (MIT): [Oreo Doodle Icons](https://github.com/oreo-design/doodle-icons) (MIT), [Tabler Icons](https://tabler.io/icons) (MIT) and [OpenMoji](https://openmoji.org) line art (CC BY-SA 4.0) for the Kraken. They're in `web/vendor/art` and `web/vendor/rough`, each with its license.
