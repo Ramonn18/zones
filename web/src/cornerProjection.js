@@ -16,29 +16,32 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
   let artist = null; // the mural's illustrations, once loaded
   loadArt().then(art => { artist = createArtist(content.getContext("2d"), art); }).catch(err => console.error("The mural's art didn't load:", err));
 
-  // state: { mode: "off" | "frame" | "fit" | "play", blackout, output, corner, hunt }. In "fit",
-  // the alignment grid; in "play", the pirate mural and its treasure hunt.
+  // state: { mode: "off" | "frame" | "fit" | "play", blackout, output, corner, hunt, crowd, calib }.
+  // In "fit", the alignment grid; in "play", the pirate mural and its treasure hunt. While the
+  // camera is being fitted (calib), only the dot it's looking for.
   function draw(state) {
     const w = canvas.width, h = canvas.height, out = state.output || defaultOutput();
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
     if (state.blackout && !preview) return;
+    if (state.calib) return walls(state, w, h, { ...out, soft: 0 }, (g, c, px) => calibDot(g, c, px, state.calib.dot));
     if (state.mode === "frame") pattern(w, h, out.pattern);
     else if (state.mode !== "off") walls(state, w, h, out);
     if (out.brightness < 1) { ctx.fillStyle = `rgba(0,0,0,${1 - out.brightness})`; ctx.fillRect(0, 0, w, h); }
-    if (state.mode === "fit") pins(state, w, h);
+    if (state.mode === "fit" && !state.calib) pins(state, w, h);
     if (state.blackout) blackoutNote(w, h);
   }
 
-  function walls(state, w, h, out) {
-    const c = state.corner;
-    const drawContent = state.mode === "play" && artist
-      ? (g, c, px) => drawMural(g, artist, c, px, state.hunt || newHunt(), Date.now())
+  function walls(state, w, h, out, drawContent) {
+    const c = state.corner, playing = state.mode === "play" && !state.calib;
+    drawContent ||= playing && artist
+      ? (g, c, px) => drawMural(g, artist, c, px, state.hunt || newHunt(), Date.now(), state.crowd?.moves)
       : drawAlignment;
     const CW = Math.round((c.left.width + c.right.width) * PX), CH = Math.round(c.height * PX);
     if (content.width !== CW || content.height !== CH) { content.width = CW; content.height = CH; }
     const g = content.getContext("2d");
     g.clearRect(0, 0, CW, CH);
     drawContent(g, c, PX);
+    if (playing && state.crowd?.shield) keepOffPeople(g, state.crowd);
     if (out.soft > 0) soften(g, CW, CH, out.soft * PX);
     const quads = wallQuads(c), split = Math.round(c.left.width * PX);
     for (const [side, x0, x1] of [["left", 0, split], ["right", split, CW]]) {
@@ -48,6 +51,26 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
       hg.drawImage(content, x0, 0, x1 - x0, CH, 0, 0, x1 - x0, CH);
       ctx.drawImage(warp.render(half, quads[side].map(p => ({ x: p.x * w, y: p.y * h })), w, h), 0, 0);
     }
+  }
+
+  // Darkens where people are (crowd.shield, a grid over corner space), with soft edges, so the
+  // projector's light doesn't land on them.
+  const shieldCanvas = document.createElement("canvas");
+  function keepOffPeople(g, crowd) {
+    const { cols, rows, cell, shield } = crowd;
+    if (shieldCanvas.width !== cols || shieldCanvas.height !== rows) { shieldCanvas.width = cols; shieldCanvas.height = rows; }
+    const sg = shieldCanvas.getContext("2d"), img = sg.createImageData(cols, rows);
+    for (let i = 0; i < shield.length; i++) img.data[i * 4 + 3] = shield[i];
+    sg.putImageData(img, 0, 0);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(shieldCanvas, 0, 0, cols * cell * PX, rows * cell * PX);
+  }
+
+  // Black, with one white dot (corner cm) for the camera to find.
+  function calibDot(g, c, px, dot) {
+    g.fillStyle = "#000"; g.fillRect(0, 0, (c.left.width + c.right.width) * px, c.height * px);
+    if (!dot) return;
+    g.fillStyle = "#fff"; g.beginPath(); g.arc(dot.x * px, dot.y * px, 3 * px, 0, Math.PI * 2); g.fill();
   }
 
   // Fades the picture's four outer edges (not the fold) to nothing over `d` pixels, so its

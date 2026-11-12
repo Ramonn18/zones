@@ -27,15 +27,27 @@ const SCENERY = [
 ];
 const WAVES = [[34, 102], [52, 98], [86, 104], [196, 82], [180, 104], [128, 72]];
 
+// Every drawing, with its home and how much room it takes (r, cm), for making way for people
+// (people.js). A drawing's move is moves[key] = [dx, dy] (cm).
+export const MURAL_OBJECTS = [
+  ...SCENES.map(s => ({ key: `scene:${s.id}`, x: s.x, y: s.y + 2, r: s.size * 0.65 })), // its label hangs below
+  ...SCENERY.map(([, x, y, size], i) => ({ key: `scenery:${i}`, x, y, r: size * 0.6 })),
+  ...WAVES.map(([x, y], i) => ({ key: `wave:${i}`, x, y, r: 6 })),
+];
+const moved = (moves, key) => moves?.[key] || [0, 0];
+// The scenes where they are now.
+export const placedScenes = moves => SCENES.map(s => { const [dx, dy] = moved(moves, `scene:${s.id}`); return { ...s, x: s.x + dx, y: s.y + dy }; });
+
 // ---- The hunt --------------------------------------------------------------------------------
 // The state is plain data, so the corner page can send it to the projector window. Times are
 // Date.now(), the same in both windows.
 export const newHunt = () => ({ step: 0, reached: {}, hover: null, hoverSince: 0, finished: 0 });
 
-// pointer: where a hand (for now, the mouse) touches the corner (cm), or null.
-export function updateHunt(hunt, pointer, now) {
+// pointer: where a hand (for now, the mouse) touches the corner (cm), or null. moves: where the
+// drawings have moved to, making way for people.
+export function updateHunt(hunt, pointer, now, moves) {
   if (hunt.finished && now - hunt.finished > FINALE_MS) Object.assign(hunt, newHunt());
-  const over = pointer && SCENES.find(s => Math.hypot(pointer.x - s.x, pointer.y - s.y) < s.r);
+  const over = pointer && placedScenes(moves).find(s => Math.hypot(pointer.x - s.x, pointer.y - s.y) < s.r);
   if ((over?.id || null) !== hunt.hover) { hunt.hover = over?.id || null; hunt.hoverSince = now; }
   const target = SCENES[hunt.step];
   if (target && hunt.hover === target.id && now - hunt.hoverSince > DWELL) reachNext(hunt, now);
@@ -83,22 +95,23 @@ function trail(ctx, a, b, progress) {
   for (let i = 0; i <= n; i++) { const s = from + (to - from) * i / n; if (s > end) break; const p = at(s); ctx.beginPath(); ctx.arc(p.x, p.y, 0.5, 0, Math.PI * 2); ctx.fill(); }
 }
 
-// Draws the mural. c: the corner; px: pixels per cm on the content canvas; hunt: its state.
-export function drawMural(ctx, artist, c, px, hunt, now) {
-  const W = c.left.width + c.right.width;
+// Draws the mural. c: the corner; px: pixels per cm on the content canvas; hunt: its state;
+// moves: where drawings have moved to, making way for people.
+export function drawMural(ctx, artist, c, px, hunt, now, moves) {
+  const W = c.left.width + c.right.width, scenes = placedScenes(moves);
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W * px, c.height * px);
   ctx.save(); ctx.scale(px, px);
   ctx.lineCap = ctx.lineJoin = "round";
 
-  SCENERY.forEach(([name, x, y, size], i) => artist.draw(name, x, y + Math.sin(now / 1400 + i) * 0.4, size, { seed: i, now, line: 0.4 }));
-  WAVES.forEach(([x, y], i) => artist.draw("waves", x + Math.sin(now / 1800 + i) * 1.5, y, 12, { seed: 30 + i, now, line: 0.4 }));
+  SCENERY.forEach(([name, x, y, size], i) => { const [dx, dy] = moved(moves, `scenery:${i}`); artist.draw(name, x + dx, y + dy + Math.sin(now / 1400 + i) * 0.4, size, { seed: i, now, line: 0.4 }); });
+  WAVES.forEach(([x, y], i) => { const [dx, dy] = moved(moves, `wave:${i}`); artist.draw("waves", x + dx + Math.sin(now / 1800 + i) * 1.5, y + dy, 12, { seed: 30 + i, now, line: 0.4 }); });
 
-  for (let i = 1; i < SCENES.length; i++) {
-    const since = hunt.reached[SCENES[i - 1].id];
-    if (since) trail(ctx, SCENES[i - 1], SCENES[i], Math.min(1, (now - since) / TRAIL_MS));
+  for (let i = 1; i < scenes.length; i++) {
+    const since = hunt.reached[scenes[i - 1].id];
+    if (since) trail(ctx, scenes[i - 1], scenes[i], Math.min(1, (now - since) / TRAIL_MS));
   }
-  const next = SCENES[hunt.step];
-  SCENES.forEach((s, i) => {
+  const next = scenes[hunt.step];
+  scenes.forEach((s, i) => {
     const reachedAt = hunt.reached[s.id], moment = reachedAt ? Math.max(0, 1 - (now - reachedAt) / MOMENT_MS) : 0;
     const isNext = s === next, touching = hunt.hover === s.id, fill = isNext && touching ? Math.min(1, (now - hunt.hoverSince) / DWELL) : 0;
     const bounce = 1 + moment * 0.25 * Math.abs(Math.sin(now / 160)) + (isNext ? Math.sin(now / 320) * 0.04 : 0);
@@ -112,7 +125,7 @@ export function drawMural(ctx, artist, c, px, hunt, now) {
   });
   if (hunt.step === 0) {
     ctx.font = "700 2.4px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = INK;
-    ctx.fillText("TOUCH THE COMPASS TO START THE HUNT", SCENES[0].x + 4, SCENES[0].y - SCENES[0].size * 0.62 - 2);
+    ctx.fillText("TOUCH THE COMPASS TO START THE HUNT", scenes[0].x + 4, scenes[0].y - scenes[0].size * 0.62 - 2);
   }
   if (hunt.finished) {
     const f = (now - hunt.finished) / 1000;

@@ -22,6 +22,13 @@ How it works: the six pins are just enough to work out the projector as a lens l
 
 **Step 2, the experience: a pirate hunt on a chalk-line mural** (the **Pirate hunt** button). In the style of a white-line doodle mural on a black wall, the corner shows a pirate world: a compass, a ship, an island, the Kraken and a treasure chest, among small doodles (clouds, stars, anchor, telescope, lighthouse, parrot, mermaid, waves). Black is no light, so only the drawings shine. Touch the compass, and a dotted trail draws itself to the next scene: ship, island, the Kraken, then the treasure. Each scene celebrates when it's reached. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.
 
+**Step 3: people in front of the corner.** The mural never shines on a person: wherever someone stands between the projector and the walls, that part of the picture goes dark. Its drawings slide out of the way and gather around the person's outline, and when the person leaves, they drift back home. How it works:
+- **Calibrate the camera to the walls** (in **People**): with everyone out of the picture, the projector flashes 12 dots, one at a time. The camera finds each one, which fits the camera's picture to corner space for each wall.
+- **The person's outline:** Zones.app runs Apple Vision's person segmentation (built into macOS) on every camera frame and sends a small mask with each frame.
+- **Why it lines up:** the iPhone sits on the projector, so where a person covers the wall in the camera's picture is where the projector's light would land on them.
+- **Where the drawings go:** `web/src/people.js` turns the mask into a distance map over the corner. Each drawing under a person steps outward along it until it clears their outline.
+- **Without a real person:** in the simulation, **A person walks in** sends a figure across the room. The figure casts a real shadow from the projector, and the simulated iPhone sees its outline.
+
 **Running the show.** The corner page is the control desk for the projection:
 - **Blackout** (B) darkens the projector at once; the preview keeps showing the picture, dimmed.
 - **Brightness** and **soft edges**: soft edges fade the picture's outer border, so the projector's glow doesn't end in a hard line on the wall.
@@ -104,6 +111,7 @@ The markers are **ArUco** markers (4×4), read with [js-aruco2](https://github.c
 | `Zones.app` (`app/`), `projectors.json` | The Mac app that starts everything and finds the projector, and the projectors it knows |
 | `web/corner.html`, `web/corner-projector.html` | The corner: fitting the projector's picture to two walls, and the projector's window |
 | `web/src/cornerSim.js` | The simulated room for the corner: projector light, the iPhone, a player's view, touching the walls |
+| `web/src/people.js` | People in front of the corner: fitting the camera to the walls, where people are, and moving the drawings out of their way |
 | `web/src/mural.js`, `web/src/art.js` | The pirate mural and its hunt, and drawing the library art hand-sketched |
 | `web/src/corner.js`, `web/src/cornerProjection.js`, `web/src/cornerState.js` | The corner's geometry (the projector as a lens), drawing it, and its saved setup |
 

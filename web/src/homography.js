@@ -32,7 +32,7 @@ export function invert(H) {
 export const UNIT = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
 
 // Gaussian elimination with partial pivoting.
-function solve(A, b) {
+export function solve(A, b) {
   const n = b.length, M = A.map((row, i) => [...row, b[i]]);
   for (let c = 0; c < n; c++) {
     let p = c;

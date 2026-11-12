@@ -86,6 +86,14 @@
       <div class="status" id="camStatus">Camera off</div>
     </section>
     <section>
+      <h2>People</h2>
+      <p class="hint">The camera finds people in front of the corner (Apple Vision, in Zones.app). The mural keeps its light off them, and its drawings move out of their way and gather around them. First, show the camera where the walls are: with everyone out of the picture, calibrate (the projector flashes 12 dots, about 10 seconds).</p>
+      <div class="row"><button id="calibrate">Calibrate the camera to the walls</button></div>
+      <div class="row" style="margin-top:6px"><button id="makeWay">Make way for people</button><button id="showPeople" class="on">Show what it sees</button><button id="walkBtn" hidden>A person walks in</button></div>
+      <div class="status" id="calibStatus"></div>
+      <div class="status" id="peopleStatus"></div>
+    </section>
+    <section>
       <h2>2. Fit it to the corner</h2>
       <p class="hint">Drag the six pins in the preview: 1 and 6 on the left wall's outer edge, 2 and 5 on the fold, 3 and 4 on the right wall's outer edge. Arrow keys nudge the chosen pin; Shift for more. The grid's squares are 10 cm: when they measure 10 cm on both walls, it fits.</p>
       <label>Left wall, width (cm) <input id="leftW" type="number" min="20" max="400"></label>
@@ -135,7 +143,8 @@
 // what to show. window.corner is for poking at things from the console.
 import { createCornerProjection } from "./src/cornerProjection.js";
 import { PINS, defaultCorner, projToCorner } from "./src/corner.js";
-import { SCENES, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
+import { SCENES, MURAL_OBJECTS, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
+import { calibrationDots, brightness, findDot, fitCamera, cornerToCamera, createPresence, makeWay } from "./src/people.js";
 import { ROOM1 } from "./src/room1.js";
 import { loadCornerState, saveCornerState, setupOf, applySetup, savedSetups, storeSetups } from "./src/cornerState.js";
 
@@ -154,6 +163,7 @@ function publish() {
   $("blackout").classList.toggle("on", state.blackout);
   $("blackout").textContent = state.blackout ? "Blackout: on" : "Blackout";
   showPin();
+  if (!calibrating) showFit();
 }
 function showSizes() {
   $("leftW").value = state.corner.left.width;
@@ -331,14 +341,15 @@ async function startSim() {
   const { createCornerSim } = await import("./src/cornerSim.js");
   sim ||= createCornerSim(ROOM1);
   $("roomFigure").hidden = false;
-  $("exactBtn").hidden = false;
+  $("exactBtn").hidden = $("walkBtn").hidden = false;
   $("simBtn").classList.add("on");
   $("camCaption").textContent = "Camera, simulated: the iPhone on top of the projector";
 }
 $("simBtn").addEventListener("click", () => {
   if (!sim || $("roomFigure").hidden) return startSim();
-  $("roomFigure").hidden = $("exactBtn").hidden = true; // back to the real room (the simulation stays ready)
+  $("roomFigure").hidden = $("exactBtn").hidden = $("walkBtn").hidden = true; // back to the real room (the simulation stays ready)
   $("simBtn").classList.remove("on");
+  walkSince = 0; $("walkBtn").classList.remove("on"); sim.setPerson(null);
   $("camCaption").textContent = "Camera (the iPhone, on top of the projector)";
   sim = null;
 });
@@ -353,6 +364,7 @@ if (SIM) startSim();
 // ---- The camera: the app sends frames (its own capture); a browser uses the camera directly ----
 const CAMERA_KEY = "zones-corner-camera", camCanvas = $("camera"), cam = camCanvas.getContext("2d");
 let video = null, picture = null, pictureSize = null;
+let peopleMask = null; // where people are in the camera's picture, from the app (Apple Vision)
 const camStatus = (text, ok = false) => { $("camStatus").textContent = text; $("camStatus").className = `status ${ok ? "ok" : ""}`; };
 const savedCamera = () => { try { return localStorage.getItem(CAMERA_KEY); } catch { return null; } };
 const isPhone = label => /iphone/i.test(label) && !/desk view/i.test(label);
@@ -373,7 +385,10 @@ if (IN_APP) {
     useCamera(pick.id, pick.label);
   };
   const img = new Image();
-  window.zonesFrame = (jpeg, w, h) => { img.src = `data:image/jpeg;base64,${jpeg}`; picture = img; pictureSize = { w, h }; };
+  window.zonesFrame = (jpeg, w, h, people) => {
+    img.src = `data:image/jpeg;base64,${jpeg}`; picture = img; pictureSize = { w, h };
+    if (people) peopleMask = { w: people.w, h: people.h, data: Uint8Array.from(atob(people.data), ch => ch.charCodeAt(0)), at: performance.now() };
+  };
 }
 function useCamera(id, label) {
   try { localStorage.setItem(CAMERA_KEY, id); } catch {}
@@ -404,20 +419,136 @@ $("startCam").addEventListener("click", startCamera);
 $("camSelect").addEventListener("change", e => useCamera(e.target.value, e.target.selectedOptions[0].textContent));
 if (savedCamera()) startCamera(); // the camera used last time starts by itself
 
-function drawCamera() {
-  if (sim) { cam.drawImage(sim.cameraView(), 0, 0, camCanvas.width, camCanvas.height); return; }
-  if (!picture) return;
-  const w = picture.videoWidth || pictureSize?.w || picture.width, h = picture.videoHeight || pictureSize?.h || picture.height;
-  if (!w || !h) return;
-  const height = Math.round(camCanvas.width * h / w);
-  if (camCanvas.height !== height) camCanvas.height = height;
-  cam.drawImage(picture, 0, 0, camCanvas.width, camCanvas.height);
+function drawCamera(mask) {
+  if (sim) cam.drawImage(sim.cameraView(), 0, 0, camCanvas.width, camCanvas.height);
+  else {
+    if (!picture) return;
+    const w = picture.videoWidth || pictureSize?.w || picture.width, h = picture.videoHeight || pictureSize?.h || picture.height;
+    if (!w || !h) return;
+    const height = Math.round(camCanvas.width * h / w);
+    if (camCanvas.height !== height) camCanvas.height = height;
+    cam.drawImage(picture, 0, 0, camCanvas.width, camCanvas.height);
+  }
+  if ($("showPeople").classList.contains("on")) seenOverlay(mask);
+}
+
+// What the camera understands, over its picture: the walls as it was fitted to them, and people.
+const maskCanvas = document.createElement("canvas");
+function seenOverlay(mask) {
+  const W = camCanvas.width, H = camCanvas.height, fit = state.cameraFit, c = state.corner;
+  if (mask) {
+    if (maskCanvas.width !== mask.w || maskCanvas.height !== mask.h) { maskCanvas.width = mask.w; maskCanvas.height = mask.h; }
+    const mg = maskCanvas.getContext("2d"), img = mg.createImageData(mask.w, mask.h);
+    for (let i = 0; i < mask.data.length; i++) { img.data[i * 4] = 56; img.data[i * 4 + 1] = 189; img.data[i * 4 + 2] = 248; img.data[i * 4 + 3] = mask.data[i] * 0.55; }
+    mg.putImageData(img, 0, 0);
+    cam.imageSmoothingEnabled = true;
+    cam.drawImage(maskCanvas, 0, 0, W, H);
+  }
+  if (!fit) return;
+  cam.strokeStyle = "#facc15"; cam.lineWidth = 3;
+  const L = c.left.width, R = c.right.width, T = c.height;
+  for (const [x0, x1] of [[0, L], [L + 0.001, L + R]]) {
+    cam.beginPath();
+    const edge = [];
+    for (let k = 0; k <= 10; k++) edge.push({ x: x0 + (x1 - x0) * k / 10, y: 0 });
+    for (let k = 0; k <= 10; k++) edge.push({ x: x1, y: T * k / 10 });
+    for (let k = 10; k >= 0; k--) edge.push({ x: x0 + (x1 - x0) * k / 10, y: T });
+    for (let k = 10; k >= 0; k--) edge.push({ x: x0, y: T * k / 10 });
+    edge.forEach((p, i) => { const q = cornerToCamera(fit, c, p); cam[i ? "lineTo" : "moveTo"](q.x * W, q.y * H); });
+    cam.stroke();
+  }
+}
+
+// ---- People: fitting the camera to the walls, then making way for whoever is in front -------
+const calibStatus = (text, ok = false) => { $("calibStatus").textContent = text; $("calibStatus").className = `status ${ok ? "ok" : ""}`; };
+const showFit = () => {
+  const f = state.cameraFit;
+  if (!f) return calibStatus("The camera isn't fitted to the walls yet");
+  const stale = f.size && (f.size.left !== state.corner.left.width || f.size.right !== state.corner.right.width || f.size.height !== state.corner.height);
+  calibStatus(stale ? "The walls' sizes changed since the camera was fitted: calibrate again" : `Camera fitted to the walls · within ${f.error.toFixed(1)} cm`, !stale);
+};
+const grabCanvas = Object.assign(document.createElement("canvas"), { width: 320, height: 180 });
+// The camera's picture now, small, as brightness.
+function grab() {
+  const source = sim ? sim.cameraView() : picture;
+  const g = grabCanvas.getContext("2d", { willReadFrequently: true });
+  g.drawImage(source, 0, 0, grabCanvas.width, grabCanvas.height);
+  return brightness(g.getImageData(0, 0, grabCanvas.width, grabCanvas.height));
+}
+let calibrating = false;
+async function calibrate() {
+  if (calibrating) return;
+  if (!sim && !picture) return calibStatus("Start the camera first");
+  calibrating = true;
+  $("calibrate").disabled = true;
+  const wasBlackout = state.blackout, wait = ms => new Promise(r => setTimeout(r, ms));
+  const settle = sim ? 150 : 700; // the projector and the camera each take a moment to show a change
+  state.blackout = false;
+  try {
+    state.calib = { dot: null }; publish(); await wait(settle * 1.5);
+    const dark = grab(), dots = calibrationDots(state.corner), found = [];
+    for (const [i, dot] of dots.entries()) {
+      calibStatus(`Calibrating: dot ${i + 1} of ${dots.length}… keep out of the picture`);
+      state.calib = { dot }; publish(); await wait(settle);
+      const cam = findDot(dark, grab());
+      if (cam) found.push({ dot, cam });
+      state.calib = { dot: null }; publish(); await wait(settle / 2);
+    }
+    const fit = fitCamera(found, state.corner);
+    if (fit.failed) calibStatus(`Calibration failed: ${fit.failed}. Dim the room's lights and check the camera sees the whole corner.`);
+    else { state.cameraFit = fit; showFit(); }
+  } finally {
+    state.calib = null; state.blackout = wasBlackout; publish();
+    calibrating = false; $("calibrate").disabled = false;
+  }
+}
+$("calibrate").addEventListener("click", calibrate);
+const showMakeWay = () => { $("makeWay").classList.toggle("on", state.output.makeWay); $("makeWay").textContent = state.output.makeWay ? "Make way for people: on" : "Make way for people: off"; };
+$("makeWay").addEventListener("click", () => { state.output.makeWay = !state.output.makeWay; showMakeWay(); publish(); });
+$("showPeople").addEventListener("click", e => e.target.classList.toggle("on"));
+
+// The simulated person: walks in beside the east wall, stands in front of the corner, walks out.
+let walkSince = 0;
+const WALK = [{ t: 0, x: 105, y: 40 }, { t: 4, x: 90, y: -95 }, { t: 9, x: 90, y: -95 }, { t: 13, x: 105, y: 40 }, { t: 15, x: 105, y: 40 }];
+function walker(now) {
+  const t = ((now - walkSince) / 1000) % WALK[WALK.length - 1].t, k = WALK.findIndex(p => p.t > t), a = WALK[k - 1], b = WALK[k], f = (t - a.t) / (b.t - a.t);
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+}
+$("walkBtn").addEventListener("click", () => {
+  walkSince = walkSince ? 0 : performance.now();
+  $("walkBtn").classList.toggle("on", !!walkSince);
+  if (!walkSince) sim?.setPerson(null);
+});
+
+const presence = createPresence();
+let moves = {}, lastTick = performance.now();
+// Each frame: where people are on the corner, and where the drawings go to make way.
+function people(dt) {
+  if (sim && walkSince) sim.setPerson(walker(performance.now()));
+  const mask = sim ? sim.personMask() : peopleMask && performance.now() - peopleMask.at < 1000 ? peopleMask : null;
+  const fresh = state.cameraFit && !state.cameraFit.failed;
+  const field = mask && fresh && state.output.makeWay && state.mode === "play" && !state.calib ? presence.update(mask, state.cameraFit, state.corner, dt) : null;
+  moves = makeWay(MURAL_OBJECTS, field, state.corner, moves, dt);
+  state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves };
+  const moving = Object.keys(moves).length;
+  $("peopleStatus").textContent =
+    !sim && !IN_APP ? "People are found by Zones.app (or the simulation); a browser can't yet" :
+    !mask ? (sim ? "No one in the simulated room: try A person walks in" : "Waiting for the camera") :
+    !fresh ? "Calibrate first, so the camera's picture maps onto the walls" :
+    !state.output.makeWay ? "Making way is off" :
+    state.mode !== "play" ? "Making way works in Pirate hunt" :
+    field.area > 0.002 ? `A person covers ${Math.round(field.area * 100)}% of the corner · ${moving} drawings making way` :
+    moving ? "Drawings drifting home" : "No one in front of the corner";
+  return mask;
 }
 
 function frame() {
+  const now = performance.now(), dt = Math.min(0.1, (now - lastTick) / 1000);
+  lastTick = now;
+  const mask = people(dt);
   if (state.mode === "play") {
-    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer, Date.now());
-    bc.postMessage({ type: "hunt", hunt: state.hunt });
+    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer, Date.now(), moves);
+    bc.postMessage({ type: "hunt", hunt: state.hunt, crowd: state.crowd });
     const next = SCENES[state.hunt.step];
     $("huntStatus").textContent = (huntPaused ? "Paused (touches are ignored) · " : "") +
       (state.hunt.finished ? "Treasure found! Starting over soon." : `Next: ${next.name.toLowerCase()} (${next.id}) · step ${state.hunt.step + 1} of ${SCENES.length}`);
@@ -430,7 +561,7 @@ function frame() {
     $("simStatus").textContent = off < 0.002 ? "Pins fit the simulated corner exactly" : `Pins are off the simulated corner by up to ${Math.round(off * 1920)} projector pixels`;
     $("simStatus").className = `status ${off < 0.002 ? "ok" : ""}`;
   }
-  drawCamera();
+  drawCamera(mask);
   const alive = projSize && performance.now() - projSeen < 2500;
   const which = window.zonesApp?.projector && window.zonesApp.projector !== "none" ? ` on ${window.zonesApp.projector}` : "";
   $("projStatus").textContent = alive ? `Projector window connected${which} · ${projSize.w} × ${projSize.h}${projFps ? ` · ${projFps} fps` : ""}` : "Projector window not open";
@@ -440,6 +571,8 @@ function frame() {
 showSizes();
 showOutput();
 showUndo();
+showFit();
+showMakeWay();
 listSetups();
 publish();
 window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; }, get sim() { return sim; } };

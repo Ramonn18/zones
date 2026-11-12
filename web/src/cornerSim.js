@@ -52,6 +52,55 @@ export function createCornerSim(model) {
   eyes.position.copy(v3(model.player.at.x, model.player.at.y, model.player.at.z));
   eyes.lookAt(v3(P.aim.x, P.aim.y, P.aim.z - 10));
 
+  // A person who can walk into the room: a simple figure (about 176 cm) that blocks the projector's
+  // light like a body does. A copy of them in plain white, in a scene of their own, is what the
+  // iPhone's person detection would find: their outline in its picture.
+  const fold = cornerFrame(model, { left: { width: 0 } }).fold;
+  const figure = (material) => {
+    const g = new THREE.Group(), part = (geo, x, y, z, sx = 1, sz = 1) => {
+      const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); m.scale.set(sx, 1, sz); m.castShadow = m.receiveShadow = true; g.add(m);
+    };
+    part(new THREE.CapsuleGeometry(7, 70, 4, 12), -9, 42, 0);           // legs
+    part(new THREE.CapsuleGeometry(7, 70, 4, 12), 9, 42, 0);
+    part(new THREE.CapsuleGeometry(17, 40, 4, 16), 0, 112, 0, 1, 0.6);  // body
+    part(new THREE.CapsuleGeometry(5, 52, 4, 10), -24, 108, 0);         // arms
+    part(new THREE.CapsuleGeometry(5, 52, 4, 10), 24, 108, 0);
+    part(new THREE.SphereGeometry(11, 20, 16), 0, 160, 0);              // head
+    g.visible = false;
+    return g;
+  };
+  const person = figure(new THREE.MeshStandardMaterial({ color: "#3b4a6b", roughness: 0.8 }));
+  const outline = figure(new THREE.MeshBasicMaterial({ color: "#ffffff" }));
+  const maskScene = new THREE.Scene();
+  maskScene.background = new THREE.Color("#000000");
+  scene.add(person);
+  maskScene.add(outline);
+  // where: a spot on the floor (room space, cm), or null for no one. They face the corner.
+  function setPerson(where) {
+    for (const g of [person, outline]) {
+      g.visible = !!where;
+      if (!where) continue;
+      g.position.copy(v3(where.x, where.y, 0));
+      g.rotation.y = Math.atan2(fold.x - where.x, fold.y - where.y);
+    }
+  }
+  const MW = 160, MH = 90, target = new THREE.WebGLRenderTarget(MW, MH), rgba = new Uint8Array(MW * MH * 4), mask = { w: MW, h: MH, data: new Uint8Array(MW * MH) };
+  // The person's outline in the iPhone's picture, as Apple Vision would give it (0..255 over a small grid).
+  function personMask() {
+    if (!person.visible) { mask.data.fill(0); return mask; }
+    renderer.setRenderTarget(target);
+    renderer.render(maskScene, phone);
+    renderer.readRenderTargetPixels(target, 0, 0, MW, MH, rgba);
+    renderer.setRenderTarget(null);
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) mask.data[y * MW + x] = rgba[((MH - 1 - y) * MW + x) * 4]; // rows come bottom up
+    return mask;
+  }
+  // Where a corner point (cm) appears in the iPhone's picture (0..1): for checking the camera's fit.
+  function cameraPoint(corner, p) {
+    const q = cornerFrame(model, corner).toRoom(p), s = v3(q.x, q.y, q.z).project(phone);
+    return { x: (s.x + 1) / 2, y: (1 - s.y) / 2 };
+  }
+
   // Puts the projector's picture (a canvas, any shape) into the spotlight's square, centered.
   function project(picture) {
     const g = square.getContext("2d"), s = square.width, h = s * picture.height / picture.width;
@@ -79,7 +128,7 @@ export function createCornerSim(model) {
   const raycaster = new THREE.Raycaster();
   function touch(corner, viewPoint) {
     raycaster.setFromCamera(new THREE.Vector2(viewPoint.x * 2 - 1, 1 - viewPoint.y * 2), eyes);
-    const hit = raycaster.intersectObjects(scene.children, false).find(h => h.object !== body);
+    const hit = raycaster.intersectObjects(scene.children, false).find(h => h.object !== body && h.object !== person);
     if (!hit) return null;
     const q = { x: hit.point.x, y: hit.point.z, z: hit.point.y }; // back to room space
     const c = cornerFrame(model, corner).fromRoom(q);
@@ -93,7 +142,7 @@ export function createCornerSim(model) {
     project,
     playerView() { renderer.render(scene, eyes); return renderer.domElement; },
     cameraView() { renderer.render(scene, phone); return renderer.domElement; },
-    exactPins, touch, fitError,
+    exactPins, touch, fitError, setPerson, personMask, cameraPoint,
     // Where a corner point should land in the picture, for checking the fit.
     check: (corner, p, aspect) => ({ exact: toPicture(cornerFrame(model, corner).toRoom(p), aspect), pinned: cornerToProj(corner, p) }),
   };

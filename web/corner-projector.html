@@ -25,8 +25,8 @@ const canvas = document.getElementById("out"), help = document.getElementById("h
 const projection = createCornerProjection(canvas), bc = new BroadcastChannel("zones-corner");
 let state = loadCornerState();
 bc.onmessage = ({ data }) => {
-  if (data.type === "state") state = { ...data.state, hunt: state.hunt };
-  if (data.type === "hunt") state.hunt = data.hunt;
+  if (data.type === "state") state = { ...data.state, hunt: state.hunt, crowd: state.crowd };
+  if (data.type === "hunt") { state.hunt = data.hunt; state.crowd = data.crowd; }
 };
 let fps = 0, frames = 0, counted = performance.now(); // how smoothly the projector's picture is drawn
 const hello = () => bc.postMessage({ type: "hello", w: canvas.width, h: canvas.height, fps });
