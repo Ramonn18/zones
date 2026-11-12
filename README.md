@@ -45,6 +45,18 @@ Then open http://localhost:8010 in **Safari** (it can use the iPhone as a camera
 
 Each place the game runs is an **environment**: its table size, camera height, zones, its real north (read with the iPhone's built-in Compass app: point it from the table's center toward the rim's N marker) and its landmarks ("Door 135, Window 270"). **New room** makes one, and **Export** and **Import** move it between computers as a file.
 
+### Room 1: a 3D twin
+
+**Room 1 (3D)** puts the simulation in a 3D model of the meeting room in `rooms/room 1`. It was built from the photos there:
+- a black, glossy 90 cm round table with four chairs
+- the cork wall with the TV (south)
+- the door (west)
+- the whiteboards (north and east)
+
+The iPhone is modeled on the ceiling grid, straight above the table, seeing it through the same 1x (24 mm) lens the photos used. The tracker reads that picture exactly as it would read the real camera, so you can test what the camera sees, whether the markers read on the black table, and the directions to the door, TV and whiteboard. Drag the pieces in the top view to move them in the room. One small picture shows the ceiling camera's view; the other shows the room from a corner.
+
+The compass is mimicked for now: the TV wall is south. Sizes are estimates from the photos (`web/src/room1.js`); measure the room, the table and the ceiling height to make it exact. In the simulation, 4 cm markers track to within 0.8 cm and 2° from the ceiling.
+
 ### Markers
 
 The markers are **ArUco** markers (4×4), read with [js-aruco2](https://github.com/damianofalcioni/js-aruco2) (MIT). They're far easier to read than QR codes at small sizes: a QR code is at least 21 squares across, while these are 6. The reader first finds the rim markers in the whole picture, then enlarges just the table 2× to read the objects' markers. That way objects' markers read down to about 3.5 cm, with the camera seeing the whole table. A simulated camera tracks positions to within 0.1 cm and headings to within 1°.
@@ -60,6 +72,7 @@ The markers are **ArUco** markers (4×4), read with [js-aruco2](https://github.c
 | `web/src/markers.js` | Drawing and reading ArUco markers |
 | `web/src/view.js` | The top-down view |
 | `web/src/sim.js` | The simulated table and camera |
+| `web/src/room1.js`, `web/src/room3d.js` | Room 1 and its 3D twin (three.js, MIT, in `web/vendor/three`) |
 | `web/print.html` | The markers, to print at true size |
 
 ## Sensing: the iPhone 15 Pro

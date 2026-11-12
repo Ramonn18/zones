@@ -12,7 +12,8 @@
   #stage { position: relative; min-height: 0; }
   #view { width: 100%; height: 100%; display: block; touch-action: none; }
   #cameraBox { position: absolute; right: 12px; bottom: 12px; width: 32%; max-width: 420px; display: none; }
-  #cameraBox canvas { width: 100%; display: block; border: 1px solid var(--line); border-radius: 8px; background: #000; }
+  #roomBox { position: absolute; left: 12px; bottom: 12px; width: 32%; max-width: 420px; display: none; }
+  #roomBox canvas, #cameraBox canvas { width: 100%; display: block; border: 1px solid var(--line); border-radius: 8px; background: #000; }
   aside { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
   h1 { margin: 0; font-size: 18px; }
   h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--dim); }
@@ -32,6 +33,7 @@
   .obj div span { color: var(--text); }
   .hint { color: var(--dim); font-size: 12px; }
 </style>
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
 <script src="vendor/aruco/cv.js"></script>
 <script src="vendor/aruco/aruco.js"></script>
 <script src="vendor/aruco/aruco_4x4_1000.js"></script>
@@ -41,6 +43,7 @@
   <div id="stage">
     <canvas id="view"></canvas>
     <div id="cameraBox"><canvas id="camera" width="960" height="540"></canvas></div>
+    <div id="roomBox"><canvas id="roomView" width="960" height="540"></canvas></div>
   </div>
   <aside>
     <h1>Zones <small>A pirate table: zones, objects and the ways they face</small></h1>
@@ -56,6 +59,7 @@
       <div class="row">
         <button id="simBtn">Simulation</button>
         <button id="camBtn">Camera</button>
+        <button id="roomBtn">Room 1 (3D)</button>
       </div>
       <select id="camSelect" hidden></select>
       <div class="status" id="sourceStatus"></div>
@@ -89,6 +93,8 @@ import { createView } from "./src/view.js";
 import { createSim } from "./src/sim.js";
 import { createTracker } from "./src/tracker.js";
 import { createReader } from "./src/markers.js";
+import { ROOM1, landmarksOf, room1Environment } from "./src/room1.js";
+import { createRoom3D } from "./src/room3d.js";
 
 const $ = id => document.getElementById(id);
 const SIMCAM = new URLSearchParams(location.search).has("simcam"); // the simulation plays the camera, for testing
@@ -98,6 +104,7 @@ let sim = createSim(env);
 const view = createView($("view"));
 let tracker = createTracker(), reader = null;
 let source = SIMCAM ? "camera" : "sim", video = null, objects = sim.objects, tableFound = 0;
+let room3d = null; // Room 1's 3D twin: plays the iPhone on its ceiling
 
 // ---- Environment ------------------------------------------------------------------------
 function showEnvironments() {
@@ -109,11 +116,23 @@ function showEnvironments() {
   $("north").value = env.room.north;
   $("landmarks").value = env.room.landmarks.map(l => `${l.name} ${l.bearing}`).join(", ");
 }
-function changed() { saveEnvironment(env); sim = createSim(env); if (source === "sim") objects = sim.objects; tracker = createTracker(); }
+function changed() {
+  saveEnvironment(env);
+  sim = createSim(env);
+  if (source === "sim") objects = sim.objects;
+  tracker = createTracker();
+  room3d = null; // rebuilt with the new sizes
+  if (source === "room") startRoom();
+}
 $("envSelect").addEventListener("change", e => { useEnvironment(e.target.value); env = currentEnvironment(); changed(); showEnvironments(); });
 $("diameter").addEventListener("change", e => { env.table.diameter = Math.max(40, +e.target.value || 120); changed(); });
 $("height").addEventListener("change", e => { env.camera.height = Math.max(30, +e.target.value || 100); changed(); });
-$("north").addEventListener("change", e => { env.room.north = ((+e.target.value || 0) % 360 + 360) % 360; changed(); });
+$("north").addEventListener("change", e => {
+  env.room.north = ((+e.target.value || 0) % 360 + 360) % 360;
+  if (env.model === ROOM1.id) env.room.landmarks = landmarksOf(ROOM1, env.room.north); // they turn with it
+  changed();
+  showEnvironments();
+});
 // "Door 135, Window 270": a name and its real bearing, for each thing in the room.
 $("landmarks").addEventListener("change", e => {
   env.room.landmarks = e.target.value.split(",").map(t => t.trim().match(/^(.*\S)\s+(\d+(?:\.\d+)?)$/)).filter(Boolean)
@@ -140,7 +159,27 @@ $("importFile").addEventListener("change", async e => {
 
 // ---- Source -----------------------------------------------------------------------------
 const setStatus = (text, kind = "") => { $("sourceStatus").textContent = text; $("sourceStatus").className = `status ${kind}`; };
-$("simBtn").addEventListener("click", () => { source = "sim"; objects = sim.objects; $("cameraBox").style.display = "none"; setStatus(""); });
+$("simBtn").addEventListener("click", () => { source = "sim"; objects = sim.objects; $("cameraBox").style.display = $("roomBox").style.display = "none"; setStatus(""); });
+$("roomBtn").addEventListener("click", () => {
+  if (env.model !== ROOM1.id) { // Room 1's own environment: its table, camera height and landmarks
+    const saved = listEnvironments()[ROOM1.name];
+    env = saved?.model === ROOM1.id ? complete(saved) : room1Environment();
+    saveEnvironment(env);
+    sim = createSim(env);
+    tracker = createTracker();
+    showEnvironments();
+  }
+  startRoom();
+});
+
+// Room 1's twin: the simulation's pieces stand in its 3D room, the iPhone on the ceiling sees them,
+// and the tracker reads that picture like a real camera's.
+function startRoom() {
+  reader ||= createReader();
+  room3d ||= createRoom3D(ROOM1, env);
+  source = "room";
+  $("cameraBox").style.display = $("roomBox").style.display = "block";
+}
 $("camBtn").addEventListener("click", () => startCamera().catch(err => setStatus(`Camera failed: ${err.message || err.name}`, "bad")));
 $("camSelect").addEventListener("change", e => startCamera(e.target.value).catch(err => setStatus(`Camera failed: ${err.message || err.name}`, "bad")));
 
@@ -176,7 +215,7 @@ function scan(picture) {
   }
   const result = tracker.update(env, seen, performance.now());
   tableFound = result.found;
-  if (source === "camera") objects = result.objects;
+  if (source !== "sim") objects = result.objects;
 }
 
 function drawCamera(picture) {
@@ -198,8 +237,10 @@ function drawCamera(picture) {
 let held = null;
 const cssPoint = e => { const r = $("view").getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
 $("view").addEventListener("pointerdown", e => {
-  if (source !== "sim") return;
-  held = view.hit(objects, cssPoint(e));
+  if (source !== "sim" && source !== "room") return;
+  // In Room 1, you move the pieces in the 3D room, and see where the camera tracks them.
+  const hit = view.hit(objects, cssPoint(e));
+  held = hit && { ...hit, object: sim.objects.find(o => o.id === hit.object.id) };
   if (held) $("view").setPointerCapture(e.pointerId);
 });
 $("view").addEventListener("pointermove", e => {
@@ -226,12 +267,18 @@ function describe() {
       <div>${others}</div></div>`;
   }).join("");
   if ($("objects").innerHTML !== html) $("objects").innerHTML = html;
-  $("simHint").hidden = source !== "sim";
-  if (source === "camera") setStatus(tableFound === 4 ? `Table found · ${objects.length} of 3 objects seen` : `Looking for the table's rim markers: ${tableFound} of 4`, tableFound === 4 ? "ok" : "");
+  $("simHint").hidden = source === "camera";
+  if (source !== "sim") setStatus(tableFound === 4 ? `Table found · ${objects.length} of 3 objects seen` : `Looking for the table's rim markers: ${tableFound} of 4`, tableFound === 4 ? "ok" : "");
 }
 
 function frame() {
-  if (source === "camera") {
+  if (source === "room" && room3d) {
+    const picture = room3d.cameraFrame(sim.objects);
+    scan(picture);
+    drawCamera(picture);
+    const g = $("roomView").getContext("2d");
+    g.drawImage(room3d.overview(sim.objects), 0, 0, $("roomView").width, $("roomView").height);
+  } else if (source === "camera") {
     const picture = SIMCAM ? sim.cameraFrame(env) : video;
     if (picture && (SIMCAM || video.readyState >= 2)) { scan(picture); drawCamera(picture); }
   }
@@ -241,7 +288,7 @@ function frame() {
 }
 
 showEnvironments();
-window.zones = { get env() { return env; }, get objects() { return objects; }, get sim() { return sim; }, get source() { return source; } };
+window.zones = { get env() { return env; }, get objects() { return objects; }, get sim() { return sim; }, get source() { return source; }, get tracker() { return tracker; } };
 requestAnimationFrame(frame);
 </script>
 </body>
