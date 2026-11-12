@@ -87,11 +87,12 @@
     </section>
     <section>
       <h2>People</h2>
-      <p class="hint">The camera finds people in front of the corner (Apple Vision, in Zones.app). The mural keeps its light off them, and its drawings move out of their way and gather around them. First, show the camera where the walls are: with everyone out of the picture, calibrate (the projector flashes 12 dots, about 10 seconds).</p>
+      <p class="hint">The camera finds people in front of the corner (Apple Vision, in Zones.app). The mural keeps its light off them, and its drawings move out of their way and gather around them. First, show the camera where the walls are: with everyone out of the picture, calibrate (the projector flashes 18 dots, about 20 seconds).</p>
       <div class="row"><button id="calibrate">Calibrate the camera to the walls</button></div>
       <div class="row" style="margin-top:6px"><button id="makeWay">Make way for people</button><button id="showPeople" class="on">Show what it sees</button><button id="walkBtn" hidden>A person walks in</button></div>
       <div class="status" id="calibStatus"></div>
       <div class="status" id="peopleStatus"></div>
+      <div class="status" id="handsStatus"></div>
     </section>
     <section>
       <h2>2. Fit it to the corner</h2>
@@ -144,12 +145,15 @@
 import { createCornerProjection } from "./src/cornerProjection.js";
 import { PINS, defaultCorner, projToCorner } from "./src/corner.js";
 import { SCENES, MURAL_OBJECTS, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
-import { calibrationDots, brightness, findDot, fitCamera, cornerToCamera, createPresence, makeWay } from "./src/people.js";
+import { calibrationDots, brightness, findArea, findDot, fitCamera, implausible, cornerToCamera, createPresence, makeWay, isPointing, aimOf } from "./src/people.js";
+import { placedScenes } from "./src/mural.js";
 import { ROOM1 } from "./src/room1.js";
 import { loadCornerState, saveCornerState, setupOf, applySetup, savedSetups, storeSetups } from "./src/cornerState.js";
 
 const $ = id => document.getElementById(id);
 const state = loadCornerState(), preview = $("preview"), projection = createCornerProjection(preview, { preview: true });
+// A fit that's far off, or nonsense, is no use (and is redone by itself).
+if (state.cameraFit && (state.cameraFit.error > 6 || implausible(state.cameraFit, state.corner))) state.cameraFit = null;
 const bc = new BroadcastChannel("zones-corner");
 let projSize = null, projSeen = 0, projFps = 0, dragging = -1;
 state.hunt = newHunt();
@@ -365,6 +369,8 @@ if (SIM) startSim();
 const CAMERA_KEY = "zones-corner-camera", camCanvas = $("camera"), cam = camCanvas.getContext("2d");
 let video = null, picture = null, pictureSize = null;
 let peopleMask = null; // where people are in the camera's picture, from the app (Apple Vision)
+let seenHands = null;  // and their hands' joints
+let frameNo = 0;       // counts the app's camera frames as they arrive
 const camStatus = (text, ok = false) => { $("camStatus").textContent = text; $("camStatus").className = `status ${ok ? "ok" : ""}`; };
 const savedCamera = () => { try { return localStorage.getItem(CAMERA_KEY); } catch { return null; } };
 const isPhone = label => /iphone/i.test(label) && !/desk view/i.test(label);
@@ -384,10 +390,14 @@ if (IN_APP) {
     showCameras(cams, pick.id);
     useCamera(pick.id, pick.label);
   };
-  const img = new Image();
-  window.zonesFrame = (jpeg, w, h, people) => {
-    img.src = `data:image/jpeg;base64,${jpeg}`; picture = img; pictureSize = { w, h };
-    if (people) peopleMask = { w: people.w, h: people.h, data: Uint8Array.from(atob(people.data), ch => ch.charCodeAt(0)), at: performance.now() };
+  // seen: what Apple Vision found in the frame: { mask: { w, h, data (base64) }, hands: [...] }
+  window.zonesFrame = (jpeg, w, h, seen) => {
+    const img = new Image(); // shown only once it's decoded, so the picture is never half there
+    img.onload = () => { picture = img; pictureSize = { w, h }; frameNo++; };
+    img.src = `data:image/jpeg;base64,${jpeg}`;
+    const m = seen?.mask, at = performance.now();
+    if (m) peopleMask = { w: m.w, h: m.h, data: Uint8Array.from(atob(m.data), ch => ch.charCodeAt(0)), at };
+    if (seen) seenHands = { hands: seen.hands || [], at };
   };
 }
 function useCamera(id, label) {
@@ -444,6 +454,18 @@ function seenOverlay(mask) {
     cam.imageSmoothingEnabled = true;
     cam.drawImage(maskCanvas, 0, 0, W, H);
   }
+  // Hands: their joints, and a pointing finger's line (green while it points).
+  for (const hand of seenHands && performance.now() - seenHands.at < 400 ? seenHands.hands : []) {
+    const points = Object.values(hand), on = isPointing(hand);
+    cam.fillStyle = on ? "#4ade80" : "#f472b6";
+    for (const [x, y] of points) { cam.beginPath(); cam.arc(x * W, y * H, 6, 0, Math.PI * 2); cam.fill(); }
+    if (on) {
+      const [mx, my] = hand.indexMCP, [tx, ty] = hand.indexTip;
+      cam.strokeStyle = "#4ade80"; cam.lineWidth = 3; cam.setLineDash([8, 8]);
+      cam.beginPath(); cam.moveTo(mx * W, my * H); cam.lineTo((tx + (tx - mx) * 12) * W, (ty + (ty - my) * 12) * H); cam.stroke();
+      cam.setLineDash([]);
+    }
+  }
   if (!fit) return;
   cam.strokeStyle = "#facc15"; cam.lineWidth = 3;
   const L = c.left.width, R = c.right.width, T = c.height;
@@ -463,7 +485,7 @@ function seenOverlay(mask) {
 const calibStatus = (text, ok = false) => { $("calibStatus").textContent = text; $("calibStatus").className = `status ${ok ? "ok" : ""}`; };
 const showFit = () => {
   const f = state.cameraFit;
-  if (!f) return calibStatus("The camera isn't fitted to the walls yet");
+  if (!f) return calibStatus(calibFailed || "The camera isn't fitted to the walls yet");
   const stale = f.size && (f.size.left !== state.corner.left.width || f.size.right !== state.corner.right.width || f.size.height !== state.corner.height);
   calibStatus(stale ? "The walls' sizes changed since the camera was fitted: calibrate again" : `Camera fitted to the walls · within ${f.error.toFixed(1)} cm`, !stale);
 };
@@ -475,28 +497,65 @@ function grab() {
   g.drawImage(source, 0, 0, grabCanvas.width, grabCanvas.height);
   return brightness(g.getImageData(0, 0, grabCanvas.width, grabCanvas.height));
 }
-let calibrating = false;
+let calibrating = false, calibFailed = "", lastCalibration = [];
 async function calibrate() {
   if (calibrating) return;
   if (!sim && !picture) return calibStatus("Start the camera first");
   calibrating = true;
   $("calibrate").disabled = true;
   const wasBlackout = state.blackout, wait = ms => new Promise(r => setTimeout(r, ms));
-  const settle = sim ? 150 : 700; // the projector and the camera each take a moment to show a change
+  // Shows a step of the calibration, then watches the camera's new frames until seen(frame) says
+  // the step shows up (the iPhone's picture can arrive a second or more late; a fixed wait isn't
+  // enough). Returns { frame, result } from the frame that showed it, or from the last one tried.
+  const showUntil = async (calib, seen, patience = 3500) => {
+    state.calib = calib; publish();
+    await wait(sim ? 150 : 250);
+    const until = performance.now() + (sim ? 0 : patience);
+    let n = -1, last = null;
+    do {
+      if (sim || frameNo !== n) {
+        n = frameNo;
+        const frame = grab(), result = seen(frame);
+        last = { frame, result };
+        if (result.ok) return last;
+      }
+      await wait(30);
+    } while (performance.now() < until);
+    return last;
+  };
+  const bright = (from, to) => findArea(from, to)?.strength || 0;
   state.blackout = false;
   try {
-    state.calib = { dot: null }; publish(); await wait(settle * 1.5);
-    const dark = grab(), dots = calibrationDots(state.corner), found = [];
+    lastCalibration = [];
+    calibStatus("Calibrating: finding the projector's picture… please stand still");
+    state.calib = { dot: null }; publish(); await wait(sim ? 150 : 1500);
+    const black = grab();
+    const white = await showUntil({ dot: "all" }, f => ({ ok: bright(black, f) > 60 }));
+    const area = findArea(black, white.frame);
+    if (!area) throw new Error("the projector's picture wasn't seen: is the projector on, and the camera aimed at the corner?");
+    const strong = Math.max(25, area.strength * 0.35); // a dot is about as bright as the white was
+    let before = (await showUntil({ dot: null }, f => ({ ok: bright(f, white.frame) > area.strength * 0.6 }))).frame;
+    const dots = calibrationDots(state.corner), found = [];
     for (const [i, dot] of dots.entries()) {
-      calibStatus(`Calibrating: dot ${i + 1} of ${dots.length}… keep out of the picture`);
-      state.calib = { dot }; publish(); await wait(settle);
-      const cam = findDot(dark, grab());
-      if (cam) found.push({ dot, cam });
-      state.calib = { dot: null }; publish(); await wait(settle / 2);
+      calibStatus(`Calibrating: dot ${i + 1} of ${dots.length}… please stand still`);
+      // Each dot against the picture just before it (the last dot, or black): only the new dot got brighter.
+      const step = await showUntil({ dot }, f => {
+        const people = sim ? sim.personMask() : peopleMask;
+        const r = findDot(before, f, { people: people && people.data.some(v => v > 60) ? people : null, area });
+        return { ok: !r.miss && r.strength >= strong, r };
+      }, 3000);
+      const cam = step.result.r;
+      lastCalibration.push(step.result.ok ? { strength: cam.strength } : { ...cam, miss: cam.miss || "too faint" });
+      if (step.result.ok) found.push({ dot, cam });
+      before = step.frame;
     }
     const fit = fitCamera(found, state.corner);
+    calibFailed = fit.failed ? `Calibration failed: ${fit.failed}.` : "";
     if (fit.failed) calibStatus(`Calibration failed: ${fit.failed}. Dim the room's lights and check the camera sees the whole corner.`);
     else { state.cameraFit = fit; showFit(); }
+  } catch (err) {
+    calibFailed = `Calibration failed: ${err.message}.`;
+    calibStatus(calibFailed);
   } finally {
     state.calib = null; state.blackout = wasBlackout; publish();
     calibrating = false; $("calibrate").disabled = false;
@@ -521,7 +580,7 @@ $("walkBtn").addEventListener("click", () => {
 });
 
 const presence = createPresence();
-let moves = {}, lastTick = performance.now();
+let moves = {}, lastTick = performance.now(), aim = null, handsStatus = "", autoCalibrated = false;
 // Each frame: where people are on the corner, and where the drawings go to make way.
 function people(dt) {
   if (sim && walkSince) sim.setPerson(walker(performance.now()));
@@ -529,7 +588,18 @@ function people(dt) {
   const fresh = state.cameraFit && !state.cameraFit.failed;
   const field = mask && fresh && state.output.makeWay && state.mode === "play" && !state.calib ? presence.update(mask, state.cameraFit, state.corner, dt) : null;
   moves = makeWay(MURAL_OBJECTS, field, state.corner, moves, dt);
-  state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves };
+  // A hand pointing with its index finger: where it aims, and the scene it points at.
+  const hands = seenHands && performance.now() - seenHands.at < 400 ? seenHands.hands : [];
+  const pointing = fresh && state.mode === "play" && !state.calib && hands.find(isPointing);
+  aim = pointing ? aimOf(pointing, state.cameraFit, state.corner, placedScenes(moves)) : null;
+  state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves, aim };
+  handsStatus = !hands.length ? "No hands seen" : `${hands.length} hand${hands.length > 1 ? "s" : ""} seen` +
+    (pointing ? (aim?.scene ? ` · pointing at the ${aim.scene}` : " · pointing") : " · not pointing");
+  if (IN_APP && !sim && !state.cameraFit && picture && !calibrating && !autoCalibrated) { // first time: fit the camera by itself
+    autoCalibrated = true;
+    calibStatus("No camera fit yet: calibrating by itself in 3 seconds…");
+    setTimeout(calibrate, 3000);
+  }
   const moving = Object.keys(moves).length;
   $("peopleStatus").textContent =
     !sim && !IN_APP ? "People are found by Zones.app (or the simulation); a browser can't yet" :
@@ -539,15 +609,28 @@ function people(dt) {
     state.mode !== "play" ? "Making way works in Pirate hunt" :
     field.area > 0.002 ? `A person covers ${Math.round(field.area * 100)}% of the corner · ${moving} drawings making way` :
     moving ? "Drawings drifting home" : "No one in front of the corner";
+  $("handsStatus").textContent = IN_APP || seenHands ? handsStatus : "";
   return mask;
 }
+
+// In Zones.app: what the page is doing, about once a second, to .zones-status.json in the project.
+if (IN_APP && window.webkit?.messageHandlers?.status) setInterval(() => {
+  window.webkit.messageHandlers.status.postMessage({
+    time: new Date().toISOString(), mode: state.mode, blackout: state.blackout,
+    projector: $("projStatus").textContent, camera: $("camStatus").textContent,
+    calibration: $("calibStatus").textContent, people: $("peopleStatus").textContent, hands: handsStatus,
+    aim: aim && { scene: aim.scene, from: aim.from, to: aim.to },
+    hunt: $("huntStatus").textContent, lastCalibration, cameraFitError: state.cameraFit?.error ?? null,
+    framesFromCamera: !!picture, maskAge: peopleMask ? Math.round(performance.now() - peopleMask.at) : null,
+  });
+}, 1000);
 
 function frame() {
   const now = performance.now(), dt = Math.min(0.1, (now - lastTick) / 1000);
   lastTick = now;
   const mask = people(dt);
   if (state.mode === "play") {
-    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer, Date.now(), moves);
+    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer || aim?.to, Date.now(), moves);
     bc.postMessage({ type: "hunt", hunt: state.hunt, crowd: state.crowd });
     const next = SCENES[state.hunt.step];
     $("huntStatus").textContent = (huntPaused ? "Paused (touches are ignored) · " : "") +
@@ -575,7 +658,7 @@ showFit();
 showMakeWay();
 listSetups();
 publish();
-window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; }, get sim() { return sim; } };
+window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; }, get sim() { return sim; }, set hands(h) { seenHands = { hands: h, at: performance.now() }; }, get aim() { return aim; } };
 requestAnimationFrame(frame);
 </script>
 </body>

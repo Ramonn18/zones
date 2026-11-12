@@ -34,7 +34,7 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
   function walls(state, w, h, out, drawContent) {
     const c = state.corner, playing = state.mode === "play" && !state.calib;
     drawContent ||= playing && artist
-      ? (g, c, px) => drawMural(g, artist, c, px, state.hunt || newHunt(), Date.now(), state.crowd?.moves)
+      ? (g, c, px) => drawMural(g, artist, c, px, state.hunt || newHunt(), Date.now(), state.crowd?.moves, state.crowd?.aim)
       : drawAlignment;
     const CW = Math.round((c.left.width + c.right.width) * PX), CH = Math.round(c.height * PX);
     if (content.width !== CW || content.height !== CH) { content.width = CW; content.height = CH; }
@@ -66,11 +66,11 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
     g.drawImage(shieldCanvas, 0, 0, cols * cell * PX, rows * cell * PX);
   }
 
-  // Black, with one white dot (corner cm) for the camera to find.
+  // Black, with one white dot (corner cm) for the camera to find; dot "all": the whole corner white.
   function calibDot(g, c, px, dot) {
-    g.fillStyle = "#000"; g.fillRect(0, 0, (c.left.width + c.right.width) * px, c.height * px);
-    if (!dot) return;
-    g.fillStyle = "#fff"; g.beginPath(); g.arc(dot.x * px, dot.y * px, 3 * px, 0, Math.PI * 2); g.fill();
+    g.fillStyle = dot === "all" ? "#fff" : "#000"; g.fillRect(0, 0, (c.left.width + c.right.width) * px, c.height * px);
+    if (!dot || dot === "all") return;
+    g.fillStyle = "#fff"; g.beginPath(); g.arc(dot.x * px, dot.y * px, 4 * px, 0, Math.PI * 2); g.fill();
   }
 
   // Fades the picture's four outer edges (not the fold) to nothing over `d` pixels, so its

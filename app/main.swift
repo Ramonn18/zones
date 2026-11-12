@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     view.isInspectable = true
     config.userContentController.add(self, name: "camera")
     config.userContentController.add(self, name: "file")
+    config.userContentController.add(self, name: "status")
     view.navigationDelegate = self
     view.uiDelegate = self
     return view
@@ -138,6 +139,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
   // ---- The camera (the page asks through window.webkit.messageHandlers.camera) ----------------
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    // What the corner page is doing, written to .zones-status.json in the project folder about once
+    // a second, so it can be checked from outside the app (a terminal, or Claude).
+    if message.name == "status", let body = message.body as? [String: Any],
+       let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]) {
+      try? data.write(to: root.appendingPathComponent(".zones-status.json"))
+      return
+    }
     guard let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
     if message.name == "file" {
       if action == "save", let name = body["name"] as? String, let text = body["text"] as? String { saveFile(name, text) }
@@ -146,9 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     if action == "list" {
       AVCaptureDevice.requestAccess(for: .video) { granted in DispatchQueue.main.async {
         guard granted else { return self.callPage("zonesCameraError", "Camera access is off: allow Zones in System Settings > Privacy & Security > Camera.") }
-        self.camera.onFrame = { jpeg, w, h, mask in DispatchQueue.main.async {
-          let people = mask.map { "{ w: \(NativeCamera.maskW), h: \(NativeCamera.maskH), data: '\($0)' }" } ?? "null"
-          self.controlView.evaluateJavaScript("window.zonesFrame?.('\(jpeg)', \(w), \(h), \(people)); 0") { _, _ in self.camera.busy = false }
+        self.camera.onFrame = { jpeg, w, h, seen in DispatchQueue.main.async {
+          self.controlView.evaluateJavaScript("window.zonesFrame?.('\(jpeg)', \(w), \(h), \(seen ?? "null")); 0") { _, _ in self.camera.busy = false }
         } }
         self.callPage("zonesCameras", NativeCamera.list().map { ["id": $0.uniqueID, "label": $0.localizedName] })
       } }

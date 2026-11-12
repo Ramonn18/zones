@@ -15,11 +15,12 @@ const FADE_S = 0.4;      // seconds a spot stays "occupied" after a person leave
 const GLIDE_S = 0.25;    // how quickly drawings glide to where they're going (seconds, roughly)
 
 // ---- Fitting the camera to the walls ---------------------------------------------------------
-// The dots the projector shows, one at a time, for the camera to find: six on each wall.
+const MIN_DOTS = 5;      // dots a wall needs found, to fit the camera to it
+// The dots the projector shows, one at a time, for the camera to find: nine on each wall.
 export function calibrationDots(c) {
   const dots = [];
   for (const [wall, x0, w] of [["left", 0, c.left.width], ["right", c.left.width, c.right.width]]) {
-    for (const v of [0.22, 0.78]) for (const u of [0.15, 0.5, 0.85]) dots.push({ wall, x: x0 + u * w, y: v * c.height });
+    for (const v of [0.18, 0.5, 0.82]) for (const u of [0.15, 0.5, 0.85]) dots.push({ wall, x: x0 + u * w, y: v * c.height });
   }
   return dots;
 }
@@ -32,21 +33,65 @@ export function brightness(img) {
 }
 
 // Where a dot appeared: compares the camera's picture with the dot on (lit) and off (dark).
-// Returns its center in the picture (0..1), or null if nothing clearly lit up.
-export function findDot(dark, lit) {
-  const { w, h } = lit;
+// people (optional): the person mask, whose pixels are ignored (someone moving isn't a dot).
+// Returns its center in the picture (0..1), or { miss } saying why nothing lit up as one small, clear spot.
+// area (optional): where the projector's picture is in the camera's picture (findArea); only
+// there can a dot be.
+export function findDot(dark, lit, { people, area } = {}) {
+  const { w, h } = lit, d = new Float32Array(w * h);
+  // A person, and a margin around them (Vision's outline lags and misses hair and edges).
+  const person = people ? (x, y) => {
+    const mx = Math.floor(x * people.w / w), my = Math.floor(y * people.h / h);
+    for (const [j, k] of [[0, 0], [-3, 0], [3, 0], [0, -3], [0, 3]]) {
+      const qx = mx + j, qy = my + k;
+      if (qx >= 0 && qy >= 0 && qx < people.w && qy < people.h && people.data[qy * people.w + qx] > 60) return true;
+    }
+    return false;
+  } : () => false;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { // a little blur, against single noisy pixels
+    if (person(x, y) || (area && !area[y * w + x])) continue;
+    let s = 0;
+    for (let k = -1; k <= 1; k++) for (let j = -1; j <= 1; j++) { const i = (y + k) * w + x + j; s += lit.data[i] - dark.data[i]; }
+    d[y * w + x] = s / 9;
+  }
   let best = 0, at = -1;
-  for (let i = 0; i < w * h; i++) { const d = lit.data[i] - dark.data[i]; if (d > best) { best = d; at = i; } }
-  if (best < 25) return null;
+  for (let i = 0; i < d.length; i++) if (d[i] > best) { best = d[i]; at = i; }
+  if (best < 20) return { miss: "too faint", strength: Math.round(best) };
   const bx = at % w, by = Math.floor(at / w), R = Math.round(w * 0.05);
-  let sx = 0, sy = 0, s = 0;
+  let sx = 0, sy = 0, s = 0, near = 0, all = 0;
+  for (let i = 0; i < d.length; i++) {
+    if (d[i] < best * 0.5) continue;
+    const x = i % w, y = Math.floor(i / w);
+    all++;
+    if (Math.abs(x - bx) <= R && Math.abs(y - by) <= R) near++;
+  }
+  if (near / all < 0.8) return { miss: "light changed in more than one place", strength: Math.round(best), clean: +(near / all).toFixed(2) };
   for (let y = Math.max(0, by - R); y <= Math.min(h - 1, by + R); y++) {
     for (let x = Math.max(0, bx - R); x <= Math.min(w - 1, bx + R); x++) {
-      const v = lit.data[y * w + x] - dark.data[y * w + x] - best * 0.4;
+      const v = d[y * w + x] - best * 0.4;
       if (v > 0) { sx += v * x; sy += v * y; s += v; }
     }
   }
   return { x: (sx / s + 0.5) / w, y: (sy / s + 0.5) / h, strength: Math.round(best) };
+}
+
+// Where the projector's picture lands in the camera's picture: what lit up when the whole corner
+// went from black to white (with a margin). Returns a 0/1 map over the picture (its .strength:
+// how much brighter the picture got), or null.
+export function findArea(dark, lit) {
+  const { w, h } = lit, d = new Float32Array(w * h);
+  let best = 0;
+  for (let i = 0; i < d.length; i++) { d[i] = lit.data[i] - dark.data[i]; if (d[i] > best) best = d[i]; }
+  if (best < 20) return null;
+  const on = new Uint8Array(w * h), R = Math.round(w * 0.01);
+  let count = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (d[y * w + x] < best * 0.3) continue;
+    count++;
+    for (let k = -R; k <= R; k++) for (let j = -R; j <= R; j++) { const qx = x + j, qy = y + k; if (qx >= 0 && qy >= 0 && qx < w && qy < h) on[qy * w + qx] = 1; }
+  }
+  on.strength = Math.round(best); // how much brighter it got, at most
+  return count > w * h * 0.01 ? on : null;
 }
 
 // The best flat mapping taking each src point to its dst point (4 or more pairs, least squares).
@@ -67,14 +112,47 @@ export function fitHomography(src, dst) {
 export function fitCamera(found, c) {
   const fit = { size: { left: c.left.width, right: c.right.width, height: c.height } };
   let sum = 0, n = 0;
+  const off = (H, p) => { const q = apply(H, p.cam); return Math.hypot(q.x - p.dot.x, q.y - p.dot.y); };
   for (const wall of ["left", "right"]) {
-    const pts = found.filter(f => f.dot.wall === wall);
-    if (pts.length < 4) return { failed: `the camera saw only ${pts.length} of the 6 dots on the ${c[wall].name.toLowerCase()}` };
+    let pts = found.filter(f => f.dot.wall === wall);
+    const shown = calibrationDots(c).filter(d => d.wall === wall).length;
+    // Four dots always fit exactly, even wrong ones (three in a line): it takes five to be sure.
+    if (pts.length < MIN_DOTS) return { failed: `the camera saw only ${pts.length} of the ${shown} dots on the ${c[wall].name.toLowerCase()}` };
     fit[wall] = fitHomography(pts.map(p => p.cam), pts.map(p => p.dot));
-    for (const p of pts) { const q = apply(fit[wall], p.cam); sum += (q.x - p.dot.x) ** 2 + (q.y - p.dot.y) ** 2; n++; }
+    // A dot found in the wrong place (a reflection, someone moving) pulls the fit: drop the worst while it's far off.
+    while (pts.length > MIN_DOTS) {
+      const worst = pts.reduce((a, p) => (off(fit[wall], p) > off(fit[wall], a) ? p : a));
+      if (off(fit[wall], worst) < 4) break;
+      pts = pts.filter(p => p !== worst);
+      fit[wall] = fitHomography(pts.map(p => p.cam), pts.map(p => p.dot));
+    }
+    for (const p of pts) { sum += off(fit[wall], p) ** 2; n++; }
   }
+  if (Math.sqrt(sum / n) > 6) return { failed: `the dots the camera found don't line up (off by ${Math.sqrt(sum / n).toFixed(0)} cm)` };
   fit.error = Math.sqrt(sum / n);
-  return fit;
+  const wrong = implausible(fit, c);
+  return wrong ? { failed: wrong } : fit;
+}
+
+// A fit can match its dots and still be nonsense. In the camera's picture, each wall should be a
+// sensible four-sided shape of a reasonable size, and the two walls should meet along the fold.
+export function implausible(fit, c) {
+  const L = c.left.width, R = c.right.width, H = c.height, cam = p => cornerToCamera(fit, c, p);
+  const walls = { left: [[0, 0], [L - 0.01, 0], [L - 0.01, H], [0, H]], right: [[L + 0.01, 0], [L + R, 0], [L + R, H], [L + 0.01, H]] };
+  for (const [wall, corners] of Object.entries(walls)) {
+    const q = corners.map(([x, y]) => cam({ x, y }));
+    let area = 0, turns = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = q[i], b = q[(i + 1) % 4], d = q[(i + 2) % 4];
+      area += a.x * b.y - b.x * a.y;
+      turns += Math.sign((b.x - a.x) * (d.y - b.y) - (b.y - a.y) * (d.x - b.x));
+    }
+    if (Math.abs(turns) !== 4) return `the ${c[wall].name.toLowerCase()} came out twisted`;
+    if (Math.abs(area / 2) < 0.01) return `the ${c[wall].name.toLowerCase()} came out too small to be right`;
+    if (q.some(p => p.x < -0.5 || p.x > 1.5 || p.y < -0.5 || p.y > 1.5)) return `the ${c[wall].name.toLowerCase()} came out far outside the picture`;
+  }
+  const gap = Math.max(...[0, H].map(y => Math.hypot(cam({ x: L - 0.01, y }).x - cam({ x: L + 0.01, y }).x, cam({ x: L - 0.01, y }).y - cam({ x: L + 0.01, y }).y)));
+  return gap > 0.03 ? "the two walls don't meet at the fold" : null;
 }
 
 // Corner space (cm) to the camera's picture (0..1), through a fit.
@@ -190,4 +268,56 @@ export function makeWay(objects, field, c, moves, dt) {
     if (Math.abs(nx) > 0.05 || Math.abs(ny) > 0.05 || tx || ty) next[o.key] = [nx, ny];
   });
   return next;
+}
+
+// ---- Pointing with the index finger ---------------------------------------------------------
+// hands: from Apple Vision, each { wrist, indexMCP, indexPIP, indexTip, middleTip, ... : [x, y] }
+// in the camera's picture (0..1). A hand points when its index finger is straight and the other
+// fingers are folded in.
+const pt = (h, k) => h[k] && { x: h[k][0], y: h[k][1] };
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+export function isPointing(h) {
+  const wrist = pt(h, "wrist"), mcp = pt(h, "indexMCP"), pip = pt(h, "indexPIP"), tip = pt(h, "indexTip");
+  if (!mcp || !tip || dist(mcp, tip) < 0.01) return false;
+  if (pip) { // the index finger is straight
+    const a = { x: pip.x - mcp.x, y: pip.y - mcp.y }, b = { x: tip.x - pip.x, y: tip.y - pip.y };
+    if ((a.x * b.x + a.y * b.y) / (Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y) || 1) < 0.7) return false;
+  }
+  if (wrist) { // and reaches well past the other fingers, which are folded
+    const reach = dist(wrist, tip);
+    for (const k of ["middleTip", "ringTip", "littleTip"]) { const f = pt(h, k); if (f && dist(wrist, f) > reach * 0.8) return false; }
+  }
+  return true;
+}
+
+// A point in the camera's picture (0..1) to where it lies on the walls (cm), or null.
+export function cameraToCorner(fit, c, q) {
+  const L = c.left.width, R = c.right.width, H = c.height;
+  const a = apply(fit.left, q);
+  if (a.x >= 0 && a.x <= L && a.y >= -10 && a.y <= H + 10) return a;
+  const b = apply(fit.right, q);
+  if (b.x >= L && b.x <= L + R && b.y >= -10 && b.y <= H + 10) return b;
+  return null;
+}
+
+// Where a pointing hand aims: along its index finger (knuckle to tip, carried on past the tip),
+// the first scene the line meets on the walls. Seen from the camera, that line runs through the
+// spot the finger points at (how far along it, one camera can't tell; the scenes decide).
+// Returns { from, to, scene }: the line on the walls (corner cm), ending at the scene it meets
+// (scene: its id) or where it leaves the walls (scene: null); null if it never meets a wall.
+export function aimOf(hand, fit, c, scenes) {
+  const mcp = pt(hand, "indexMCP"), tip = pt(hand, "indexTip"), len = dist(mcp, tip);
+  const dx = (tip.x - mcp.x) / len, dy = (tip.y - mcp.y) / len;
+  let from = null, to = null;
+  for (let s = 0; s < 1.5; s += 0.005) {
+    const q = { x: tip.x + dx * s, y: tip.y + dy * s };
+    if (q.x < 0 || q.x > 1 || q.y < 0 || q.y > 1) break;
+    const p = cameraToCorner(fit, c, q);
+    if (!p) { if (from) break; continue; }
+    from ||= p;
+    to = p;
+    const hit = scenes.find(sc => dist(sc, p) < sc.r);
+    if (hit) return { from, to: { x: hit.x, y: hit.y }, scene: hit.id };
+  }
+  return from && { from, to, scene: null };
 }

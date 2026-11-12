@@ -13,3 +13,4 @@ rooms/**/*.HEIC
 
 # Built app (rebuild with: sh app/build.sh)
 Zones.app/
+.zones-status.json

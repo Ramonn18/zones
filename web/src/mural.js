@@ -95,9 +95,21 @@ function trail(ctx, a, b, progress) {
   for (let i = 0; i <= n; i++) { const s = from + (to - from) * i / n; if (s > end) break; const p = at(s); ctx.beginPath(); ctx.arc(p.x, p.y, 0.5, 0, Math.PI * 2); ctx.fill(); }
 }
 
+// Where a pointing finger aims: a dotted chalk line along it, and a ring on the scene it reaches.
+function aimLine(ctx, artist, aim, scenes, now) {
+  const n = Math.max(1, Math.round(Math.hypot(aim.to.x - aim.from.x, aim.to.y - aim.from.y) / 2.4)), crawl = (now / 400) % 1;
+  ctx.fillStyle = INK;
+  for (let i = 0; i < n; i++) {
+    const s = (i + crawl) / n;
+    ctx.beginPath(); ctx.arc(aim.from.x + (aim.to.x - aim.from.x) * s, aim.from.y + (aim.to.y - aim.from.y) * s, 0.45, 0, Math.PI * 2); ctx.fill();
+  }
+  const hit = aim.scene && scenes.find(s => s.id === aim.scene);
+  if (hit) artist.ellipse(hit.x, hit.y, hit.size * 1.5, hit.size * 1.5, { seed: Math.floor(now / 125) % 6 + 20, roughness: 1.2, strokeWidth: 0.5 });
+}
+
 // Draws the mural. c: the corner; px: pixels per cm on the content canvas; hunt: its state;
-// moves: where drawings have moved to, making way for people.
-export function drawMural(ctx, artist, c, px, hunt, now, moves) {
+// moves: where drawings have moved to, making way for people; aim: where a finger points, or null.
+export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
   const W = c.left.width + c.right.width, scenes = placedScenes(moves);
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W * px, c.height * px);
   ctx.save(); ctx.scale(px, px);
@@ -123,9 +135,10 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves) {
     }
     if (isNext || reachedAt) label(ctx, artist, s.name, s.x, s.y + s.size * 0.62 + 4, 2.4, now, fill);
   });
+  if (aim) aimLine(ctx, artist, aim, scenes, now);
   if (hunt.step === 0) {
     ctx.font = "700 2.4px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = INK;
-    ctx.fillText("TOUCH THE COMPASS TO START THE HUNT", scenes[0].x + 4, scenes[0].y - scenes[0].size * 0.62 - 2);
+    ctx.fillText("POINT AT THE COMPASS TO START THE HUNT", scenes[0].x + 4, scenes[0].y - scenes[0].size * 0.62 - 2);
   }
   if (hunt.finished) {
     const f = (now - hunt.finished) / 1000;
