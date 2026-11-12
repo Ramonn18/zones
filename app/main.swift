@@ -45,8 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     placeProjector()
     NotificationCenter.default.addObserver(self, selector: #selector(placeProjector), name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
-    load(projectorView, "corner-projector.html")
-    load(controlView, "corner.html")
+    // Start from a clean cache: an old copy of one of the page's modules next to new ones stops
+    // the whole page (that left the projector showing only its help text after an update).
+    WKWebsiteDataStore.default().removeData(ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache], modifiedSince: .distantPast) {
+      self.load(self.projectorView, "corner-projector.html")
+      self.load(self.controlView, "corner.html")
+    }
     control.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     if testOutput != nil { selfTest() }
@@ -218,7 +222,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     bar.addItem(viewItem)
     NSApp.mainMenu = bar
   }
-  @objc func reloadAll() { controlView.reload(); projectorView.reload() }
+  @objc func reloadAll() {
+    WKWebsiteDataStore.default().removeData(ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache], modifiedSince: .distantPast) {
+      self.controlView.reloadFromOrigin(); self.projectorView.reloadFromOrigin()
+    }
+  }
 
   // ---- Self test (--selftest <folder>): where the picture went, and what it shows ------------
   func selfTest() {
