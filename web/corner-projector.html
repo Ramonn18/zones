@@ -32,7 +32,8 @@ window.addEventListener("keydown", e => {
   if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
   else (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
 });
-setTimeout(() => help.classList.add("gone"), 12000);
+// In Zones.app the picture is put full screen on the projector by the app itself.
+setTimeout(() => help.classList.add("gone"), navigator.userAgent.includes("ZonesApp") ? 0 : 12000);
 function frame() {
   const dpr = window.devicePixelRatio || 1, w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; hello(); }

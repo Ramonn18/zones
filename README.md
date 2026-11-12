@@ -14,6 +14,8 @@ This is a fresh start. The first version, a projection-mapped pirate game, is ar
 
 No support can hang the projector or camera from the ceiling, so the projector sits in a corner of Room 1 and projects across the room into the **opposite corner**, where two whiteboard walls meet (reference photos: `~/Downloads/projector view`). Players interact with that corner. The iPhone sits **on top of the projector**, so it sees the corner almost exactly as the projector does.
 
+**Start it:** double-click **`Zones.app`** in this folder. It starts the local server, opens the corner page, and puts the projector's picture full screen on a **known projector** as soon as one is connected. It follows projectors as they're plugged in and out. Known projectors are in `projectors.json`, matched by vendor, model and serial number, which stay the same, unlike macOS's display numbers. To add a projector, connect it, run `sh app/displays.sh`, and copy its line into `projectors.json`. Rebuild the app after changing `app/` with `sh app/build.sh`.
+
 **Step 1, done: fitting the picture to the corner** (`web/corner.html`). Open the projector window on the projector, then drag six pins in the preview onto the corner: each wall's outer top and bottom, and the fold's top and bottom. A grid of 10 cm squares shows the fit; when the squares measure 10 cm on both walls, it's right. Enter the projected area's real width on each wall, and its height.
 
 How it works: the six pins are just enough to work out the projector as a lens looking at a real corner (two walls at right angles). Both walls are drawn through that one lens, so the picture meets itself exactly along the fold. Fitting each wall separately was off by 2% of the picture in the middle of the fold.
@@ -84,6 +86,7 @@ The markers are **ArUco** markers (4×4), read with [js-aruco2](https://github.c
 | `web/src/sim.js` | The simulated table and camera |
 | `web/src/room1.js`, `web/src/room3d.js` | Room 1 and its 3D twin (three.js, MIT, in `web/vendor/three`) |
 | `web/print.html` | The markers, to print at true size |
+| `Zones.app` (`app/`), `projectors.json` | The Mac app that starts everything and finds the projector, and the projectors it knows |
 | `web/corner.html`, `web/corner-projector.html` | The corner: fitting the projector's picture to two walls, and the projector's window |
 | `web/src/corner.js`, `web/src/cornerProjection.js`, `web/src/cornerState.js` | The corner's geometry (the projector as a lens), drawing it, and its saved setup |
 

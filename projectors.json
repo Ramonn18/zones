@@ -1,0 +1,7 @@
+{
+  "about": "Projectors Zones knows. Zones.app puts the projector's picture full screen on the first one connected, matched by vendor, model and serial (macOS's display numbers change; these don't). Fields left out match anything. Add a new projector by running: sh app/displays.sh",
+  "projectors": [
+    { "name": "SGD SX8", "vendor": 24184, "model": 18499, "serial": 801, "resolution": "1920x1080", "seen": "2026-11-12", "notes": "Room 1, on the box in the corner beside the TV" },
+    { "name": "EPSON PJ", "resolution": "1920x1080", "seen": "2026-11-05", "notes": "v1's projector; only its name is known" }
+  ]
+}

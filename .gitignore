@@ -10,3 +10,6 @@ build/
 # Room photos are large; keep them out of the repository unless chosen
 rooms/**/*.heic
 rooms/**/*.HEIC
+
+# Built app (rebuild with: sh app/build.sh)
+Zones.app/

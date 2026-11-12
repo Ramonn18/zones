@@ -36,7 +36,7 @@
     <h1>Zones · the corner <small>The play surface: two walls and the fold between them</small></h1>
     <section>
       <h2>1. Projector</h2>
-      <p class="hint">Open its window, drag it to the projector's screen, and press F in it for full screen.</p>
+      <p class="hint" id="projHint">Open its window, drag it to the projector's screen, and press F in it for full screen.</p>
       <div class="row">
         <button id="openProj">Open projector window</button>
         <button data-mode="frame">Full picture</button>
@@ -126,10 +126,15 @@ window.addEventListener("keydown", e => {
   publish();
 });
 
+// In Zones.app, the app puts the picture on the projector and says which one.
+const IN_APP = navigator.userAgent.includes("ZonesApp");
+if (IN_APP) { $("openProj").hidden = true; $("projHint").textContent = "Zones.app puts the picture full screen on a known projector (projectors.json) as soon as it's connected."; }
+
 function frame() {
   projection.draw(state);
   const alive = projSize && performance.now() - projSeen < 2500;
-  $("projStatus").textContent = alive ? `Projector window connected · ${projSize.w} × ${projSize.h}` : "Projector window not open";
+  const which = window.zonesApp?.projector && window.zonesApp.projector !== "none" ? ` on ${window.zonesApp.projector}` : "";
+  $("projStatus").textContent = alive ? `Projector window connected${which} · ${projSize.w} × ${projSize.h}` : "Projector window not open";
   $("projStatus").className = `status ${alive ? "ok" : ""}`;
   requestAnimationFrame(frame);
 }
