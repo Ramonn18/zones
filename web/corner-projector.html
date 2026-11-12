@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zones · Corner projector</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; font: 18px/1.4 system-ui, -apple-system, sans-serif; color: #e8eef7; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; background: #111; border: 1px solid #333; border-radius: 10px; padding: 20px 28px; transition: opacity .6s; }
+  #help.gone { opacity: 0; }
+  #help b { color: #facc15; }
+</style>
+</head>
+<body>
+<canvas id="out"></canvas>
+<div id="help"><p>Drag this window onto the <b>projector's screen</b>, then press <b>F</b> for full screen.</p><p>Everything else is controlled from the corner page.</p></div>
+<script type="module">
+// The projector's window: draws what the corner page says. It keeps no state of its own, so
+// either window can be reloaded at any time.
+import { createCornerProjection } from "./src/cornerProjection.js";
+import { loadCornerState } from "./src/cornerState.js";
+
+const canvas = document.getElementById("out"), help = document.getElementById("help");
+const projection = createCornerProjection(canvas), bc = new BroadcastChannel("zones-corner");
+let state = loadCornerState();
+bc.onmessage = ({ data }) => { if (data.type === "state") state = data.state; };
+const hello = () => bc.postMessage({ type: "hello", w: canvas.width, h: canvas.height });
+setInterval(hello, 1000);
+window.addEventListener("keydown", e => {
+  if (e.key.toLowerCase() !== "f") return;
+  if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  else (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
+});
+setTimeout(() => help.classList.add("gone"), 12000);
+function frame() {
+  const dpr = window.devicePixelRatio || 1, w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; hello(); }
+  projection.draw(state);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zones · Corner</title>
+<style>
+  :root { --bg: #0b1220; --panel: #121a2b; --line: #22304a; --text: #e8eef7; --dim: #93a0b2; --accent: #facc15; --ok: #4ade80; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+  main { display: grid; grid-template-columns: 1fr 340px; min-height: 100vh; }
+  #stage { padding: 16px; }
+  #preview { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; touch-action: none; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { margin: 0; font-size: 18px; }
+  h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--dim); }
+  section { border-top: 1px solid var(--line); padding-top: 12px; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; color: var(--dim); }
+  input, button { font: inherit; color: var(--text); background: #1b2740; border: 1px solid #2c3d5e; border-radius: 6px; padding: 5px 9px; }
+  input[type=number] { width: 80px; }
+  button { cursor: pointer; }
+  button:hover, button.on { border-color: var(--accent); }
+  button.on { background: var(--accent); color: #111; font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .hint { color: var(--dim); font-size: 13px; margin: 0 0 8px; }
+  .status { color: var(--dim); font-size: 13px; }
+  .status.ok { color: var(--ok); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <div id="stage"><canvas id="preview" width="1280" height="720"></canvas></div>
+  <aside>
+    <h1>Zones · the corner <small>The play surface: two walls and the fold between them</small></h1>
+    <section>
+      <h2>1. Projector</h2>
+      <p class="hint">Open its window, drag it to the projector's screen, and press F in it for full screen.</p>
+      <div class="row">
+        <button id="openProj">Open projector window</button>
+        <button data-mode="frame">Full picture</button>
+        <button data-mode="fit">Grid</button>
+        <button data-mode="off">Black</button>
+      </div>
+      <div class="status" id="projStatus"></div>
+    </section>
+    <section>
+      <h2>2. Fit it to the corner</h2>
+      <p class="hint">Drag the six pins in the preview: 1 and 6 on the left wall's outer edge, 2 and 5 on the fold, 3 and 4 on the right wall's outer edge. Arrow keys nudge the chosen pin; Shift for more. The grid's squares are 10 cm: when they measure 10 cm on both walls, it fits.</p>
+      <label>Left wall, width (cm) <input id="leftW" type="number" min="20" max="400"></label>
+      <label>Right wall, width (cm) <input id="rightW" type="number" min="20" max="400"></label>
+      <label>Height (cm) <input id="height" type="number" min="20" max="300"></label>
+      <div class="row"><button id="reset">Reset pins</button></div>
+    </section>
+    <section>
+      <h2>Next</h2>
+      <p class="hint">The camera, on top of the projector, links to this picture; then hands and bodies are tracked against zones on the walls.</p>
+      <p class="hint"><a href="index.html">The table version</a></p>
+    </section>
+  </aside>
+</main>
+<script type="module">
+// The corner page: fits the projector's picture to the corner and tells the projector window
+// what to show. window.corner is for poking at things from the console.
+import { createCornerProjection } from "./src/cornerProjection.js";
+import { defaultCorner } from "./src/corner.js";
+import { loadCornerState, saveCornerState } from "./src/cornerState.js";
+
+const $ = id => document.getElementById(id);
+const state = loadCornerState(), preview = $("preview"), projection = createCornerProjection(preview);
+const bc = new BroadcastChannel("zones-corner");
+let projSize = null, projSeen = 0, dragging = -1;
+
+function publish() {
+  saveCornerState(state);
+  bc.postMessage({ type: "state", state });
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === state.mode));
+}
+function showSizes() {
+  $("leftW").value = state.corner.left.width;
+  $("rightW").value = state.corner.right.width;
+  $("height").value = state.corner.height;
+}
+
+bc.onmessage = ({ data }) => {
+  if (data.type !== "hello" || !data.w) return;
+  projSeen = performance.now();
+  const aspect = data.w / data.h;
+  if (!projSize || Math.abs(aspect - projSize.w / projSize.h) > 0.001) { preview.height = Math.round(preview.width / aspect); }
+  projSize = { w: data.w, h: data.h };
+  publish();
+};
+
+$("openProj").addEventListener("click", () => window.open("corner-projector.html", "zones-corner-projector", "popup,width=1280,height=720"));
+document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => { state.mode = b.dataset.mode; publish(); }));
+$("reset").addEventListener("click", () => { state.corner.pins = defaultCorner().pins; publish(); });
+for (const [id, set] of [["leftW", v => state.corner.left.width = v], ["rightW", v => state.corner.right.width = v], ["height", v => state.corner.height = v]]) {
+  $(id).addEventListener("change", e => { set(Math.max(20, +e.target.value || 100)); publish(); });
+}
+
+// Dragging and nudging the pins.
+const at = e => { const r = preview.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
+preview.addEventListener("pointerdown", e => {
+  if (state.mode !== "fit") return;
+  const p = at(e), a = preview.width / preview.height;
+  let best = -1, bestD = 0.05;
+  state.corner.pins.forEach((q, i) => { const d = Math.hypot((q.x - p.x) * a, q.y - p.y); if (d < bestD) { best = i; bestD = d; } });
+  state.selected = dragging = best;
+  if (best >= 0) preview.setPointerCapture(e.pointerId);
+  publish();
+});
+preview.addEventListener("pointermove", e => {
+  if (dragging < 0) return;
+  const p = at(e);
+  state.corner.pins[dragging] = { x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)) };
+  publish();
+});
+preview.addEventListener("pointerup", () => { dragging = -1; });
+window.addEventListener("keydown", e => {
+  const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!step || state.selected < 0 || e.target.tagName === "INPUT") return;
+  e.preventDefault();
+  const size = projSize || { w: 1920, h: 1080 }, by = e.shiftKey ? 10 : 1, p = state.corner.pins[state.selected];
+  state.corner.pins[state.selected] = { x: p.x + step[0] * by / size.w, y: p.y + step[1] * by / size.h };
+  publish();
+});
+
+function frame() {
+  projection.draw(state);
+  const alive = projSize && performance.now() - projSeen < 2500;
+  $("projStatus").textContent = alive ? `Projector window connected · ${projSize.w} × ${projSize.h}` : "Projector window not open";
+  $("projStatus").className = `status ${alive ? "ok" : ""}`;
+  requestAnimationFrame(frame);
+}
+showSizes();
+publish();
+window.corner = { state };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
