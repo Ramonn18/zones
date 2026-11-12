@@ -48,6 +48,7 @@
         <button id="openProj">Open projector window</button>
         <button data-mode="frame">Full picture</button>
         <button data-mode="fit">Grid</button>
+        <button data-mode="play">Pirate hunt</button>
         <button data-mode="off">Black</button>
       </div>
       <div class="status" id="projStatus"></div>
@@ -67,6 +68,12 @@
       <div class="row"><button id="reset">Reset pins</button></div>
     </section>
     <section>
+      <h2>3. The pirate hunt</h2>
+      <p class="hint">A chalk-line pirate mural across both walls. Touch the compass, then follow the dotted trail: ship, island, the Kraken, the treasure. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.</p>
+      <div class="row"><button id="restartHunt">Start the hunt over</button></div>
+      <div class="status" id="huntStatus"></div>
+    </section>
+    <section>
       <h2>Next</h2>
       <p class="hint">The camera, on top of the projector, links to this picture; then hands and bodies are tracked against zones on the walls.</p>
       <p class="hint"><a href="index.html">The table version</a></p>
@@ -77,13 +84,16 @@
 // The corner page: fits the projector's picture to the corner and tells the projector window
 // what to show. window.corner is for poking at things from the console.
 import { createCornerProjection } from "./src/cornerProjection.js";
-import { defaultCorner } from "./src/corner.js";
+import { defaultCorner, projToCorner } from "./src/corner.js";
+import { SCENES, newHunt, updateHunt } from "./src/mural.js";
 import { loadCornerState, saveCornerState } from "./src/cornerState.js";
 
 const $ = id => document.getElementById(id);
 const state = loadCornerState(), preview = $("preview"), projection = createCornerProjection(preview);
 const bc = new BroadcastChannel("zones-corner");
 let projSize = null, projSeen = 0, dragging = -1;
+state.hunt = newHunt();
+let pointer = null; // where the "hand" touches the corner (cm); for now, the mouse on the preview
 
 function publish() {
   saveCornerState(state);
@@ -124,12 +134,15 @@ preview.addEventListener("pointerdown", e => {
   publish();
 });
 preview.addEventListener("pointermove", e => {
+  pointer = state.mode === "play" ? projToCorner(state.corner, at(e)) : null;
   if (dragging < 0) return;
   const p = at(e);
   state.corner.pins[dragging] = { x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)) };
   publish();
 });
 preview.addEventListener("pointerup", () => { dragging = -1; });
+preview.addEventListener("pointerleave", () => { pointer = null; });
+$("restartHunt").addEventListener("click", () => { state.hunt = newHunt(); });
 window.addEventListener("keydown", e => {
   const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
   if (!step || state.selected < 0 || e.target.tagName === "INPUT") return;
@@ -207,6 +220,12 @@ function drawCamera() {
 }
 
 function frame() {
+  if (state.mode === "play") {
+    updateHunt(state.hunt, pointer, Date.now());
+    bc.postMessage({ type: "hunt", hunt: state.hunt });
+    const next = SCENES[state.hunt.step];
+    $("huntStatus").textContent = state.hunt.finished ? "Treasure found! Starting over soon." : `Next: ${next.name.toLowerCase()} (${next.id}) · step ${state.hunt.step + 1} of ${SCENES.length}`;
+  }
   projection.draw(state);
   drawCamera();
   const alive = projSize && performance.now() - projSeen < 2500;
@@ -217,7 +236,7 @@ function frame() {
 }
 showSizes();
 publish();
-window.corner = { state };
+window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; } };
 requestAnimationFrame(frame);
 </script>
 </body>

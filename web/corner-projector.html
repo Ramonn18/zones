@@ -24,7 +24,10 @@ import { loadCornerState } from "./src/cornerState.js";
 const canvas = document.getElementById("out"), help = document.getElementById("help");
 const projection = createCornerProjection(canvas), bc = new BroadcastChannel("zones-corner");
 let state = loadCornerState();
-bc.onmessage = ({ data }) => { if (data.type === "state") state = data.state; };
+bc.onmessage = ({ data }) => {
+  if (data.type === "state") state = { ...data.state, hunt: state.hunt };
+  if (data.type === "hunt") state.hunt = data.hunt;
+};
 const hello = () => bc.postMessage({ type: "hello", w: canvas.width, h: canvas.height });
 setInterval(hello, 1000);
 window.addEventListener("keydown", e => {

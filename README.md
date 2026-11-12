@@ -20,6 +20,10 @@ No support can hang the projector or camera from the ceiling, so the projector s
 
 How it works: the six pins are just enough to work out the projector as a lens looking at a real corner (two walls at right angles). Both walls are drawn through that one lens, so the picture meets itself exactly along the fold. Fitting each wall separately was off by 2% of the picture in the middle of the fold.
 
+**Step 2, the experience: a pirate hunt on a chalk-line mural** (the **Pirate hunt** button). In the style of a white-line doodle mural on a black wall, the corner shows a pirate world: a compass, a ship, an island, the Kraken and a treasure chest, among small doodles (clouds, stars, anchor, telescope, lighthouse, parrot, mermaid, waves). Black is no light, so only the drawings shine. Touch the compass, and a dotted trail draws itself to the next scene: ship, island, the Kraken, then the treasure. Each scene celebrates when it's reached. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.
+
+The illustrations come from libraries, drawn hand-sketched and gently wobbling with [Rough.js](https://roughjs.com) (MIT): [Oreo Doodle Icons](https://github.com/oreo-design/doodle-icons) (MIT), [Tabler Icons](https://tabler.io/icons) (MIT) and [OpenMoji](https://openmoji.org) line art (CC BY-SA 4.0) for the Kraken. They're in `web/vendor/art` and `web/vendor/rough`, each with its license.
+
 Next: link the camera to the picture, track hands and bodies (MediaPipe, in the browser) against zones on the walls, and the pirate content.
 
 ## Before: a round pirate table
@@ -88,6 +92,7 @@ The markers are **ArUco** markers (4×4), read with [js-aruco2](https://github.c
 | `web/print.html` | The markers, to print at true size |
 | `Zones.app` (`app/`), `projectors.json` | The Mac app that starts everything and finds the projector, and the projectors it knows |
 | `web/corner.html`, `web/corner-projector.html` | The corner: fitting the projector's picture to two walls, and the projector's window |
+| `web/src/mural.js`, `web/src/art.js` | The pirate mural and its hunt, and drawing the library art hand-sketched |
 | `web/src/corner.js`, `web/src/cornerProjection.js`, `web/src/cornerState.js` | The corner's geometry (the projector as a lens), drawing it, and its saved setup |
 
 ## Sensing: the iPhone 15 Pro

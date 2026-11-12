@@ -3,16 +3,23 @@
 // The projector window and the control page's preview both use this.
 import { createWarp } from "./warp.js";
 import { drawAlignment, wallQuads } from "./corner.js";
+import { createArtist, loadArt } from "./art.js";
+import { drawMural, newHunt } from "./mural.js";
 
 const PX = 6; // content pixels per centimeter
 
 export function createCornerProjection(canvas) {
   const ctx = canvas.getContext("2d"), warp = createWarp();
   const content = document.createElement("canvas"), half = document.createElement("canvas");
+  let artist = null; // the mural's illustrations, once loaded
+  loadArt().then(art => { artist = createArtist(content.getContext("2d"), art); }).catch(err => console.error("The mural's art didn't load:", err));
 
-  // state: { mode: "off" | "frame" | "fit", corner }. draw(content) is a function that draws the
-  // content in corner space (ctx, corner, px); by default the alignment grid.
-  function draw(state, drawContent = drawAlignment) {
+  // state: { mode: "off" | "frame" | "fit" | "play", corner, hunt }. In "fit", the alignment grid;
+  // in "play", the pirate mural and its treasure hunt.
+  function draw(state) {
+    const drawContent = state.mode === "play" && artist
+      ? (g, c, px) => drawMural(g, artist, c, px, state.hunt || newHunt(), Date.now())
+      : drawAlignment;
     const w = canvas.width, h = canvas.height, c = state.corner;
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
     if (state.mode === "off") return;
