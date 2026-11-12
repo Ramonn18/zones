@@ -6,7 +6,7 @@ root="$(cd "$here/.." && pwd)"
 app="$root/Zones.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
-swiftc -O -swift-version 5 -o "$app/Contents/MacOS/Zones" "$here/main.swift"
+swiftc -O -swift-version 5 -o "$app/Contents/MacOS/Zones" "$here/main.swift" "$here/camera.swift"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -19,6 +19,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>2.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUsageDescription</key><string>Zones watches the corner to see what players do there.</string>
+  <key>NSCameraUseContinuityCameraDeviceType</key><true/>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>ZonesFolder</key><string>$root</string>
 </dict>

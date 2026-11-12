@@ -9,7 +9,11 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, sans-serif; }
   main { display: grid; grid-template-columns: 1fr 340px; min-height: 100vh; }
-  #stage { padding: 16px; }
+  #stage { padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; align-content: start; }
+  figure { margin: 0; }
+  figcaption { font-size: 13px; color: var(--dim); margin-bottom: 6px; }
+  #camera { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; }
+  select { font: inherit; color: var(--text); background: #1b2740; border: 1px solid #2c3d5e; border-radius: 6px; padding: 5px 9px; width: 100%; margin-top: 6px; }
   #preview { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; touch-action: none; }
   aside { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
   h1 { margin: 0; font-size: 18px; }
@@ -31,7 +35,10 @@
 </head>
 <body>
 <main>
-  <div id="stage"><canvas id="preview" width="1280" height="720"></canvas></div>
+  <div id="stage">
+    <figure><figcaption>Projector output</figcaption><canvas id="preview" width="1280" height="720"></canvas></figure>
+    <figure><figcaption>Camera (the iPhone, on top of the projector)</figcaption><canvas id="camera" width="1280" height="720"></canvas></figure>
+  </div>
   <aside>
     <h1>Zones · the corner <small>The play surface: two walls and the fold between them</small></h1>
     <section>
@@ -44,6 +51,12 @@
         <button data-mode="off">Black</button>
       </div>
       <div class="status" id="projStatus"></div>
+    </section>
+    <section>
+      <h2>Camera</h2>
+      <div class="row"><button id="startCam">Start camera</button></div>
+      <select id="camSelect" hidden></select>
+      <div class="status" id="camStatus">Camera off</div>
     </section>
     <section>
       <h2>2. Fit it to the corner</h2>
@@ -130,8 +143,72 @@ window.addEventListener("keydown", e => {
 const IN_APP = navigator.userAgent.includes("ZonesApp");
 if (IN_APP) { $("openProj").hidden = true; $("projHint").textContent = "Zones.app puts the picture full screen on a known projector (projectors.json) as soon as it's connected."; }
 
+// ---- The camera: the app sends frames (its own capture); a browser uses the camera directly ----
+const CAMERA_KEY = "zones-corner-camera", camCanvas = $("camera"), cam = camCanvas.getContext("2d");
+let video = null, picture = null, pictureSize = null;
+const camStatus = (text, ok = false) => { $("camStatus").textContent = text; $("camStatus").className = `status ${ok ? "ok" : ""}`; };
+const savedCamera = () => { try { return localStorage.getItem(CAMERA_KEY); } catch { return null; } };
+const isPhone = label => /iphone/i.test(label) && !/desk view/i.test(label);
+function showCameras(cams, active) {
+  const select = $("camSelect");
+  select.innerHTML = "";
+  for (const c of cams) select.add(new Option(c.label, c.id, false, c.id === active));
+  select.hidden = false;
+}
+function chooseCamera(cams) { return cams.find(c => c.id === savedCamera()) || cams.find(c => isPhone(c.label)) || cams[0]; }
+
+if (IN_APP) {
+  window.zonesCameraError = text => camStatus(text);
+  window.zonesCameras = cams => {
+    if (!cams.length) return camStatus("No camera found");
+    const pick = chooseCamera(cams);
+    showCameras(cams, pick.id);
+    useCamera(pick.id, pick.label);
+  };
+  const img = new Image();
+  window.zonesFrame = (jpeg, w, h) => { img.src = `data:image/jpeg;base64,${jpeg}`; picture = img; pictureSize = { w, h }; };
+}
+function useCamera(id, label) {
+  try { localStorage.setItem(CAMERA_KEY, id); } catch {}
+  camStatus(`Camera: ${label}`, true);
+  if (IN_APP) return window.webkit.messageHandlers.camera.postMessage({ action: "start", id });
+  startBrowserCamera(id).catch(err => camStatus(`Camera failed: ${err.message || err.name}`));
+}
+async function startBrowserCamera(id) {
+  video?.srcObject?.getTracks().forEach(t => t.stop());
+  video ||= Object.assign(document.createElement("video"), { muted: true, playsInline: true });
+  const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  video.srcObject = await navigator.mediaDevices.getUserMedia({ audio: false, video: id ? { deviceId: { exact: id }, ...size } : size });
+  await video.play();
+  picture = video;
+}
+async function startCamera() {
+  if (IN_APP) return window.webkit.messageHandlers.camera.postMessage({ action: "list" });
+  try {
+    await startBrowserCamera(savedCamera()); // asking once, so the cameras' names are shown
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput" && !/desk view/i.test(d.label))
+      .map(d => ({ id: d.deviceId, label: d.label || "Camera" }));
+    const pick = chooseCamera(cams);
+    showCameras(cams, pick.id);
+    useCamera(pick.id, pick.label);
+  } catch (err) { camStatus(`Camera failed: ${err.message || err.name}`); }
+}
+$("startCam").addEventListener("click", startCamera);
+$("camSelect").addEventListener("change", e => useCamera(e.target.value, e.target.selectedOptions[0].textContent));
+if (savedCamera()) startCamera(); // the camera used last time starts by itself
+
+function drawCamera() {
+  if (!picture) return;
+  const w = picture.videoWidth || pictureSize?.w || picture.width, h = picture.videoHeight || pictureSize?.h || picture.height;
+  if (!w || !h) return;
+  const height = Math.round(camCanvas.width * h / w);
+  if (camCanvas.height !== height) camCanvas.height = height;
+  cam.drawImage(picture, 0, 0, camCanvas.width, camCanvas.height);
+}
+
 function frame() {
   projection.draw(state);
+  drawCamera();
   const alive = projSize && performance.now() - projSeen < 2500;
   const which = window.zonesApp?.projector && window.zonesApp.projector !== "none" ? ` on ${window.zonesApp.projector}` : "";
   $("projStatus").textContent = alive ? `Projector window connected${which} · ${projSize.w} × ${projSize.h}` : "Projector window not open";

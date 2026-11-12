@@ -3,6 +3,7 @@
 // as soon as one is connected, moving it when projectors come and go.
 import AppKit
 import WebKit
+import AVFoundation
 
 let port = 8010
 let base = "http://localhost:\(port)/"
@@ -11,7 +12,7 @@ let base = "http://localhost:\(port)/"
 struct Known: Decodable { let name: String; let vendor: UInt32?; let model: UInt32?; let serial: UInt32? }
 struct KnownList: Decodable { let projectors: [Known] }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKScriptMessageHandler {
   var control: NSWindow!, projector: NSWindow!
   var controlView: WKWebView!, projectorView: WKWebView!
   var server: Process?
@@ -19,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   var root: URL!
   var testOutput: String?
   var current = "none" // the projector the picture is on, for the corner page
+  let camera = NativeCamera()
 
   func applicationDidFinishLaunching(_ note: Notification) {
     let args = CommandLine.arguments
@@ -65,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     config.preferences.setValue(true, forKey: "developerExtrasEnabled") // right click > Inspect Element
     let view = WKWebView(frame: .zero, configuration: config)
     view.isInspectable = true
+    config.userContentController.add(self, name: "camera")
     view.navigationDelegate = self
     return view
   }
@@ -127,6 +130,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     controlView?.evaluateJavaScript("window.zonesApp = \(json); window.dispatchEvent(new Event('zonesapp'));", completionHandler: nil)
   }
 
+  // ---- The camera (the page asks through window.webkit.messageHandlers.camera) ----------------
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    guard let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
+    if action == "list" {
+      AVCaptureDevice.requestAccess(for: .video) { granted in DispatchQueue.main.async {
+        guard granted else { return self.callPage("zonesCameraError", "Camera access is off: allow Zones in System Settings > Privacy & Security > Camera.") }
+        self.camera.onFrame = { jpeg, w, h in DispatchQueue.main.async {
+          self.controlView.evaluateJavaScript("window.zonesFrame?.('\(jpeg)', \(w), \(h)); 0") { _, _ in self.camera.busy = false }
+        } }
+        self.callPage("zonesCameras", NativeCamera.list().map { ["id": $0.uniqueID, "label": $0.localizedName] })
+      } }
+    } else if action == "start", let id = body["id"] as? String {
+      camera.start(id: id) { text in DispatchQueue.main.async { self.callPage("zonesCameraError", text) } }
+    }
+  }
+  func callPage(_ fn: String, _ arg: Any) {
+    guard let data = try? JSONSerialization.data(withJSONObject: arg, options: [.fragmentsAllowed]), let json = String(data: data, encoding: .utf8) else { return }
+    controlView.evaluateJavaScript("window.\(fn)?.(\(json))", completionHandler: nil)
+  }
+
   // ---- Server and lifecycle ----------------------------------------------------------------
   // If another server already has the port (one started in a terminal), this one just exits.
   func startServer() {
@@ -141,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     server = p
   }
   func windowWillClose(_ note: Notification) { NSApp.terminate(nil) }
-  func applicationWillTerminate(_ note: Notification) { server?.terminate() }
+  func applicationWillTerminate(_ note: Notification) { camera.stop(); server?.terminate() }
 
   func buildMenu() {
     let bar = NSMenu(), appItem = NSMenuItem(), appMenu = NSMenu()
@@ -161,8 +184,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     let out = URL(fileURLWithPath: testOutput!)
     print("screens:", NSScreen.screens.map { "\($0.localizedName) \($0.frame)" })
     print("projecting on:", current, "| window:", projector.frame)
-    DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-      self.controlView.evaluateJavaScript("document.getElementById('projStatus').textContent") { r, _ in print("corner page says:", r ?? "nothing") }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.controlView.evaluateJavaScript("document.getElementById('startCam').click()", completionHandler: nil) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+      self.controlView.evaluateJavaScript("document.getElementById('projStatus').textContent + ' | ' + document.getElementById('camStatus').textContent") { r, _ in print("corner page says:", r ?? "nothing") }
+      self.controlView.takeSnapshot(with: nil) { image, _ in
+        if let tiff = image?.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+          try? png.write(to: out.appendingPathComponent("app-corner-control.png"))
+        }
+      }
       self.projectorView.takeSnapshot(with: nil) { image, _ in
         if let tiff = image?.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
           try? png.write(to: out.appendingPathComponent("app-corner-projector.png"))
