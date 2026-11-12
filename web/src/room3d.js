@@ -10,7 +10,7 @@ import { drawMarker } from "./markers.js";
 const W = 1920, H = 1080; // the iPhone's picture through Continuity Camera
 
 // Room space (cm: x east, y south, z up) to three.js (x right, y up, z toward the viewer).
-const v3 = (x, y, z) => new THREE.Vector3(x, z, y);
+export const v3 = (x, y, z) => new THREE.Vector3(x, z, y);
 
 function markerTexture(id) {
   const c = Object.assign(document.createElement("canvas"), { width: 256, height: 256 });
@@ -21,25 +21,21 @@ function markerTexture(id) {
   return t;
 }
 
-export function createRoom3D(model, env) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setSize(W, H, false);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#1d1d1d");
-
-  // Lights: the ceiling's downlights, which also shine on the glossy table.
+// Builds the room in a scene: the ceiling's lights, floor, ceiling, walls, its features (TV, door,
+// whiteboards), the table and chairs. Returns a way to add more boxes. Everything casts and
+// catches shadows, so a projector's light falls on the walls and not behind the table.
+export function buildRoom(scene, model) {
   scene.add(new THREE.HemisphereLight("#ffffff", "#8a6a4a", 1.4));
   for (const [x, y] of [[-70, -60], [70, -60], [-70, 70], [70, 70]]) {
     const light = new THREE.PointLight("#fff4e6", 18000, 0, 2);
     light.position.copy(v3(x, y, model.size.z - 5));
     scene.add(light);
   }
-
   const { x: sx, y: sy, z: sz } = model.size, ox = model.center.x, oy = model.center.y;
   const box = (w, d, h, color, x, y, z, rough = 0.9) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: rough }));
     m.position.copy(v3(x, y, z));
+    m.castShadow = m.receiveShadow = true;
     scene.add(m);
     return m;
   };
@@ -50,18 +46,32 @@ export function createRoom3D(model, env) {
   box(sx, 2, sz, model.walls.south.color, ox, oy + sy / 2 + 1, sz / 2);
   box(2, sy, sz, model.walls.east.color, ox + sx / 2 + 1, oy, sz / 2);
   box(2, sy, sz, model.walls.west.color, ox - sx / 2 - 1, oy, sz / 2);
-  for (const f of model.features) box(f.size.x, f.size.y, f.size.z, f.color, f.at.x, f.at.y, f.at.z, 0.6);
+  for (const f of model.features) box(f.size.x, f.size.y, f.size.z, f.color, f.at.x, f.at.y, f.at.z, /whiteboard/i.test(f.name) ? 0.3 : 0.6); // whiteboards are glossy
 
   // The table: a glossy black top on a leg, and chairs around it.
   const T = model.table, R = T.diameter / 2;
   const top = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 3, 96), new THREE.MeshStandardMaterial({ color: T.color, roughness: 0.25, metalness: 0.1 }));
   top.position.copy(v3(0, 0, T.height - 1.5));
+  top.castShadow = top.receiveShadow = true;
   scene.add(top);
   box(6, 6, T.height - 3, "#c69c6d", 0, 0, (T.height - 3) / 2);
   for (const c of model.chairs) {
     const a = c.bearing * Math.PI / 180, d = R + 25;
     box(42, 42, 4, c.color, Math.sin(a) * d, -Math.cos(a) * d, 45);
   }
+  return { box };
+}
+
+export function createRoom3D(model, env) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(W, H, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color("#1d1d1d");
+
+  buildRoom(scene, model);
+  const T = model.table, R = T.diameter / 2;
+  const { x: sx, y: sy, z: sz } = model.size, ox = model.center.x, oy = model.center.y;
 
   // Markers flat on the table, slightly above it so they don't flicker into it.
   const flat = (id, size, x, y, z, heading) => {

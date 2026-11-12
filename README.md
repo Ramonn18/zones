@@ -22,6 +22,8 @@ How it works: the six pins are just enough to work out the projector as a lens l
 
 **Step 2, the experience: a pirate hunt on a chalk-line mural** (the **Pirate hunt** button). In the style of a white-line doodle mural on a black wall, the corner shows a pirate world: a compass, a ship, an island, the Kraken and a treasure chest, among small doodles (clouds, stars, anchor, telescope, lighthouse, parrot, mermaid, waves). Black is no light, so only the drawings shine. Touch the compass, and a dotted trail draws itself to the next scene: ship, island, the Kraken, then the treasure. Each scene celebrates when it's reached. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.
 
+**Working without the projector: the simulated room.** **Simulate the room** on the corner page (or `corner.html?sim`) opens Room 1 in 3D. The projector sits on its box in the southwest corner and shines the real projector picture into the northeast corner. The iPhone is on top of it, and a **Room view** shows a player's eyes. Click and hold on the wall in the Room view to touch it, as a hand would; the hunt reacts. The **Camera** panel shows what the iPhone would see. **Fit pins to the simulated corner** works out the exact six pins from the room's geometry. With them, every point lands exactly where the projector puts it, and the status shows how far off any other pins are. The setup's measurements are estimates in `web/src/room1.js`: the projector's position, aim and throw ratio, and how high the projected area starts.
+
 The illustrations come from libraries, drawn hand-sketched and gently wobbling with [Rough.js](https://roughjs.com) (MIT): [Oreo Doodle Icons](https://github.com/oreo-design/doodle-icons) (MIT), [Tabler Icons](https://tabler.io/icons) (MIT) and [OpenMoji](https://openmoji.org) line art (CC BY-SA 4.0) for the Kraken. They're in `web/vendor/art` and `web/vendor/rough`, each with its license.
 
 Next: link the camera to the picture, track hands and bodies (MediaPipe, in the browser) against zones on the walls, and the pirate content.
@@ -92,6 +94,7 @@ The markers are **ArUco** markers (4×4), read with [js-aruco2](https://github.c
 | `web/print.html` | The markers, to print at true size |
 | `Zones.app` (`app/`), `projectors.json` | The Mac app that starts everything and finds the projector, and the projectors it knows |
 | `web/corner.html`, `web/corner-projector.html` | The corner: fitting the projector's picture to two walls, and the projector's window |
+| `web/src/cornerSim.js` | The simulated room for the corner: projector light, the iPhone, a player's view, touching the walls |
 | `web/src/mural.js`, `web/src/art.js` | The pirate mural and its hunt, and drawing the library art hand-sketched |
 | `web/src/corner.js`, `web/src/cornerProjection.js`, `web/src/cornerState.js` | The corner's geometry (the projector as a lens), drawing it, and its saved setup |
 

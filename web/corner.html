@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zones · Corner</title>
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
 <style>
   :root { --bg: #0b1220; --panel: #121a2b; --line: #22304a; --text: #e8eef7; --dim: #93a0b2; --accent: #facc15; --ok: #4ade80; }
   * { box-sizing: border-box; }
@@ -12,6 +13,7 @@
   #stage { padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; align-content: start; }
   figure { margin: 0; }
   figcaption { font-size: 13px; color: var(--dim); margin-bottom: 6px; }
+  #roomView { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; touch-action: none; }
   #camera { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; }
   select { font: inherit; color: var(--text); background: #1b2740; border: 1px solid #2c3d5e; border-radius: 6px; padding: 5px 9px; width: 100%; margin-top: 6px; }
   #preview { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; touch-action: none; }
@@ -37,7 +39,8 @@
 <main>
   <div id="stage">
     <figure><figcaption>Projector output</figcaption><canvas id="preview" width="1280" height="720"></canvas></figure>
-    <figure><figcaption>Camera (the iPhone, on top of the projector)</figcaption><canvas id="camera" width="1280" height="720"></canvas></figure>
+    <figure><figcaption id="camCaption">Camera (the iPhone, on top of the projector)</figcaption><canvas id="camera" width="1280" height="720"></canvas></figure>
+    <figure id="roomFigure" hidden><figcaption>Room view, simulated: a player's eyes. Click and hold on the wall to touch it.</figcaption><canvas id="roomView" width="1280" height="720"></canvas></figure>
   </div>
   <aside>
     <h1>Zones · the corner <small>The play surface: two walls and the fold between them</small></h1>
@@ -52,6 +55,12 @@
         <button data-mode="off">Black</button>
       </div>
       <div class="status" id="projStatus"></div>
+    </section>
+    <section>
+      <h2>Simulation</h2>
+      <p class="hint">Without the projector: Room 1 in 3D, with the projector on its box shining this picture into the corner, the iPhone on top of it, and a player's view to touch the walls in.</p>
+      <div class="row"><button id="simBtn">Simulate the room</button><button id="exactBtn" hidden>Fit pins to the simulated corner</button></div>
+      <div class="status" id="simStatus"></div>
     </section>
     <section>
       <h2>Camera</h2>
@@ -86,6 +95,7 @@
 import { createCornerProjection } from "./src/cornerProjection.js";
 import { defaultCorner, projToCorner } from "./src/corner.js";
 import { SCENES, newHunt, updateHunt } from "./src/mural.js";
+import { ROOM1 } from "./src/room1.js";
 import { loadCornerState, saveCornerState } from "./src/cornerState.js";
 
 const $ = id => document.getElementById(id);
@@ -156,6 +166,32 @@ window.addEventListener("keydown", e => {
 const IN_APP = navigator.userAgent.includes("ZonesApp");
 if (IN_APP) { $("openProj").hidden = true; $("projHint").textContent = "Zones.app puts the picture full screen on a known projector (projectors.json) as soon as it's connected."; }
 
+// ---- Simulation: Room 1 with the projector and camera, for working without them ----------------
+let sim = null, simTouch = null; // the simulated room, and where its player touches the corner (cm)
+const SIM = new URLSearchParams(location.search).has("sim");
+async function startSim() {
+  const { createCornerSim } = await import("./src/cornerSim.js");
+  sim ||= createCornerSim(ROOM1);
+  $("roomFigure").hidden = false;
+  $("exactBtn").hidden = false;
+  $("simBtn").classList.add("on");
+  $("camCaption").textContent = "Camera, simulated: the iPhone on top of the projector";
+}
+$("simBtn").addEventListener("click", () => {
+  if (!sim || $("roomFigure").hidden) return startSim();
+  $("roomFigure").hidden = $("exactBtn").hidden = true; // back to the real room (the simulation stays ready)
+  $("simBtn").classList.remove("on");
+  $("camCaption").textContent = "Camera (the iPhone, on top of the projector)";
+  sim = null;
+});
+const pictureAspect = () => preview.width / preview.height;
+$("exactBtn").addEventListener("click", () => { state.corner.pins = sim.exactPins(state.corner, pictureAspect()); publish(); });
+const roomView = $("roomView"), roomAt = e => { const r = roomView.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
+roomView.addEventListener("pointerdown", e => { roomView.setPointerCapture(e.pointerId); simTouch = sim?.touch(state.corner, roomAt(e)) || null; });
+roomView.addEventListener("pointermove", e => { if (e.buttons) simTouch = sim?.touch(state.corner, roomAt(e)) || null; });
+roomView.addEventListener("pointerup", () => { simTouch = null; });
+if (SIM) startSim();
+
 // ---- The camera: the app sends frames (its own capture); a browser uses the camera directly ----
 const CAMERA_KEY = "zones-corner-camera", camCanvas = $("camera"), cam = camCanvas.getContext("2d");
 let video = null, picture = null, pictureSize = null;
@@ -211,6 +247,7 @@ $("camSelect").addEventListener("change", e => useCamera(e.target.value, e.targe
 if (savedCamera()) startCamera(); // the camera used last time starts by itself
 
 function drawCamera() {
+  if (sim) { cam.drawImage(sim.cameraView(), 0, 0, camCanvas.width, camCanvas.height); return; }
   if (!picture) return;
   const w = picture.videoWidth || pictureSize?.w || picture.width, h = picture.videoHeight || pictureSize?.h || picture.height;
   if (!w || !h) return;
@@ -221,12 +258,19 @@ function drawCamera() {
 
 function frame() {
   if (state.mode === "play") {
-    updateHunt(state.hunt, pointer, Date.now());
+    updateHunt(state.hunt, simTouch || pointer, Date.now());
     bc.postMessage({ type: "hunt", hunt: state.hunt });
     const next = SCENES[state.hunt.step];
     $("huntStatus").textContent = state.hunt.finished ? "Treasure found! Starting over soon." : `Next: ${next.name.toLowerCase()} (${next.id}) · step ${state.hunt.step + 1} of ${SCENES.length}`;
   }
   projection.draw(state);
+  if (sim) {
+    sim.project(preview); // the simulated projector shows exactly what the real one would
+    $("roomView").getContext("2d").drawImage(sim.playerView(), 0, 0, roomView.width, roomView.height);
+    const off = sim.fitError(state.corner, pictureAspect());
+    $("simStatus").textContent = off < 0.002 ? "Pins fit the simulated corner exactly" : `Pins are off the simulated corner by up to ${Math.round(off * 1920)} projector pixels`;
+    $("simStatus").className = `status ${off < 0.002 ? "ok" : ""}`;
+  }
   drawCamera();
   const alive = projSize && performance.now() - projSeen < 2500;
   const which = window.zonesApp?.projector && window.zonesApp.projector !== "none" ? ` on ${window.zonesApp.projector}` : "";
@@ -236,7 +280,7 @@ function frame() {
 }
 showSizes();
 publish();
-window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; } };
+window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; }, get sim() { return sim; } };
 requestAnimationFrame(frame);
 </script>
 </body>
