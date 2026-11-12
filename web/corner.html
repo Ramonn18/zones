@@ -17,7 +17,8 @@
   #camera { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; }
   select { font: inherit; color: var(--text); background: #1b2740; border: 1px solid #2c3d5e; border-radius: 6px; padding: 5px 9px; width: 100%; margin-top: 6px; }
   #preview { width: 100%; display: block; background: #000; border: 1px solid var(--line); border-radius: 8px; touch-action: none; }
-  aside { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  #stage { position: sticky; top: 0; align-self: start; }
   h1 { margin: 0; font-size: 18px; }
   h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--dim); }
   section { border-top: 1px solid var(--line); padding-top: 12px; }
@@ -33,6 +34,15 @@
   .status { color: var(--dim); font-size: 13px; }
   .status.ok { color: var(--ok); }
   a { color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; border-color: #2c3d5e; }
+  button.danger.on { background: #ef4444; border-color: #ef4444; color: #fff; }
+  input[type=range] { flex: 1; padding: 0; accent-color: var(--accent); }
+  label select { width: auto; margin: 0; flex: 1; }
+  .val { width: 44px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  summary { cursor: pointer; color: var(--dim); }
+  .keys { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  .keys td { padding: 3px 0; vertical-align: top; color: var(--dim); }
+  .keys td:first-child { color: var(--text); white-space: nowrap; padding-right: 10px; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -54,7 +64,14 @@
         <button data-mode="play">Pirate hunt</button>
         <button data-mode="off">Black</button>
       </div>
+      <div class="row" style="margin-top:6px"><button id="blackout" class="danger" title="B">Blackout</button></div>
       <div class="status" id="projStatus"></div>
+    </section>
+    <section>
+      <h2>Output</h2>
+      <label>Brightness <input id="brightness" type="range" min="0" max="100" step="1"><span class="val" id="brightnessVal"></span></label>
+      <label>Soft edges <input id="soft" type="range" min="0" max="20" step="1"><span class="val" id="softVal"></span></label>
+      <label>Test pattern <select id="pattern" title="What Full picture shows"><option value="grid">Grid: focus, coverage</option><option value="white">White: brightness, evenness</option><option value="bars">Color bars</option></select></label>
     </section>
     <section>
       <h2>Simulation</h2>
@@ -74,13 +91,37 @@
       <label>Left wall, width (cm) <input id="leftW" type="number" min="20" max="400"></label>
       <label>Right wall, width (cm) <input id="rightW" type="number" min="20" max="400"></label>
       <label>Height (cm) <input id="height" type="number" min="20" max="300"></label>
-      <div class="row"><button id="reset">Reset pins</button></div>
+      <div class="row"><button id="undo" title="⌘Z">Undo</button><button id="redo" title="⇧⌘Z">Redo</button><button id="reset">Reset pins</button></div>
+      <div class="status" id="pinStatus"></div>
     </section>
     <section>
       <h2>3. The pirate hunt</h2>
       <p class="hint">A chalk-line pirate mural across both walls. Touch the compass, then follow the dotted trail: ship, island, the Kraken, the treasure. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.</p>
-      <div class="row"><button id="restartHunt">Start the hunt over</button></div>
+      <div class="row"><button id="huntBack" title="[">◀ Back</button><button id="huntPause" title="P">Pause</button><button id="huntSkip" title="]">Skip ▶</button><button id="restartHunt" title="R">Start the hunt over</button></div>
       <div class="status" id="huntStatus"></div>
+    </section>
+    <section>
+      <h2>Setups</h2>
+      <p class="hint">A setup is the fit, the walls' sizes, the output settings and the mode: save one per room or per day, and bring it back when the projector is set up again.</p>
+      <div class="row"><input id="setupName" placeholder="Name, e.g. Room 1 corner" style="flex:1"><button id="saveSetup">Save</button></div>
+      <div class="row" style="margin-top:6px"><select id="setupList" style="flex:1;width:auto;margin:0"></select><button id="loadSetup">Load</button><button id="deleteSetup">Delete</button></div>
+      <div class="row" style="margin-top:6px"><button id="exportSetup">Save to a file…</button><button id="importSetup">Open a file…</button><input id="importFile" type="file" accept=".json,application/json" hidden></div>
+      <div class="status" id="setupStatus"></div>
+    </section>
+    <section>
+      <details>
+        <summary><h2 style="display:inline">Keyboard</h2></summary>
+        <table class="keys">
+          <tr><td>1 2 3 4</td><td>Full picture, Grid, Pirate hunt, Black</td></tr>
+          <tr><td>B</td><td>Blackout on and off</td></tr>
+          <tr><td>Tab, ⇧Tab</td><td>Choose the next or previous pin (Grid)</td></tr>
+          <tr><td>Arrows</td><td>Nudge the chosen pin 1 px; ⇧ for 10</td></tr>
+          <tr><td>Esc</td><td>Let go of the chosen pin</td></tr>
+          <tr><td>⌘Z, ⇧⌘Z</td><td>Undo, redo the fit</td></tr>
+          <tr><td>[ P ] R</td><td>Hunt: back, pause, skip, start over</td></tr>
+          <tr><td>F</td><td>Full screen (in the projector window, in a browser)</td></tr>
+        </table>
+      </details>
     </section>
     <section>
       <h2>Next</h2>
@@ -93,44 +134,89 @@
 // The corner page: fits the projector's picture to the corner and tells the projector window
 // what to show. window.corner is for poking at things from the console.
 import { createCornerProjection } from "./src/cornerProjection.js";
-import { defaultCorner, projToCorner } from "./src/corner.js";
-import { SCENES, newHunt, updateHunt } from "./src/mural.js";
+import { PINS, defaultCorner, projToCorner } from "./src/corner.js";
+import { SCENES, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
 import { ROOM1 } from "./src/room1.js";
-import { loadCornerState, saveCornerState } from "./src/cornerState.js";
+import { loadCornerState, saveCornerState, setupOf, applySetup, savedSetups, storeSetups } from "./src/cornerState.js";
 
 const $ = id => document.getElementById(id);
-const state = loadCornerState(), preview = $("preview"), projection = createCornerProjection(preview);
+const state = loadCornerState(), preview = $("preview"), projection = createCornerProjection(preview, { preview: true });
 const bc = new BroadcastChannel("zones-corner");
-let projSize = null, projSeen = 0, dragging = -1;
+let projSize = null, projSeen = 0, projFps = 0, dragging = -1;
 state.hunt = newHunt();
 let pointer = null; // where the "hand" touches the corner (cm); for now, the mouse on the preview
+let huntPaused = false;
 
 function publish() {
   saveCornerState(state);
   bc.postMessage({ type: "state", state });
   document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === state.mode));
+  $("blackout").classList.toggle("on", state.blackout);
+  $("blackout").textContent = state.blackout ? "Blackout: on" : "Blackout";
+  showPin();
 }
 function showSizes() {
   $("leftW").value = state.corner.left.width;
   $("rightW").value = state.corner.right.width;
   $("height").value = state.corner.height;
 }
+function showOutput() {
+  $("brightness").value = Math.round(state.output.brightness * 100);
+  $("brightnessVal").textContent = `${Math.round(state.output.brightness * 100)}%`;
+  $("soft").value = state.output.soft;
+  $("softVal").textContent = state.output.soft ? `${state.output.soft} cm` : "off";
+  $("pattern").value = state.output.pattern;
+}
+// The chosen pin, in the projector's pixels.
+function showPin() {
+  const i = state.selected, size = projSize || { w: 1920, h: 1080 }, p = state.corner.pins[i];
+  $("pinStatus").textContent = p ? `Pin ${i + 1}, ${PINS[i].toLowerCase()}: ${Math.round(p.x * size.w)}, ${Math.round(p.y * size.h)} px` : "Click a pin to choose it, or press Tab in Grid";
+}
 
 bc.onmessage = ({ data }) => {
   if (data.type !== "hello" || !data.w) return;
   projSeen = performance.now();
+  projFps = data.fps || 0;
   const aspect = data.w / data.h;
   if (!projSize || Math.abs(aspect - projSize.w / projSize.h) > 0.001) { preview.height = Math.round(preview.width / aspect); }
   projSize = { w: data.w, h: data.h };
   publish();
 };
 
-$("openProj").addEventListener("click", () => window.open("corner-projector.html", "zones-corner-projector", "popup,width=1280,height=720"));
-document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => { state.mode = b.dataset.mode; publish(); }));
-$("reset").addEventListener("click", () => { state.corner.pins = defaultCorner().pins; publish(); });
-for (const [id, set] of [["leftW", v => state.corner.left.width = v], ["rightW", v => state.corner.right.width = v], ["height", v => state.corner.height = v]]) {
-  $(id).addEventListener("change", e => { set(Math.max(20, +e.target.value || 100)); publish(); });
+// ---- Undo for the fit: each change to the pins or the walls' sizes can be taken back ------------
+const undos = [], redos = [];
+let lastNudge = 0;
+function remember() {
+  undos.push(JSON.stringify(state.corner));
+  if (undos.length > 200) undos.shift();
+  redos.length = 0;
+  showUndo();
 }
+function undo(back = true) {
+  const [from, to] = back ? [undos, redos] : [redos, undos];
+  if (!from.length) return;
+  to.push(JSON.stringify(state.corner));
+  state.corner = JSON.parse(from.pop());
+  showSizes(); publish(); showUndo();
+}
+function showUndo() { $("undo").disabled = !undos.length; $("redo").disabled = !redos.length; }
+$("undo").addEventListener("click", () => undo(true));
+$("redo").addEventListener("click", () => undo(false));
+
+$("openProj").addEventListener("click", () => window.open("corner-projector.html", "zones-corner-projector", "popup,width=1280,height=720"));
+const setMode = mode => { state.mode = mode; publish(); };
+document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+const toggleBlackout = () => { state.blackout = !state.blackout; publish(); };
+$("blackout").addEventListener("click", toggleBlackout);
+$("reset").addEventListener("click", () => { remember(); state.corner.pins = defaultCorner().pins; publish(); });
+for (const [id, set] of [["leftW", v => state.corner.left.width = v], ["rightW", v => state.corner.right.width = v], ["height", v => state.corner.height = v]]) {
+  $(id).addEventListener("change", e => { remember(); set(Math.max(20, +e.target.value || 100)); publish(); });
+}
+
+// ---- Output ----------------------------------------------------------------------------------
+$("brightness").addEventListener("input", e => { state.output.brightness = +e.target.value / 100; showOutput(); publish(); });
+$("soft").addEventListener("input", e => { state.output.soft = +e.target.value; showOutput(); publish(); });
+$("pattern").addEventListener("change", e => { state.output.pattern = e.target.value; setMode("frame"); });
 
 // Dragging and nudging the pins.
 const at = e => { const r = preview.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
@@ -140,7 +226,7 @@ preview.addEventListener("pointerdown", e => {
   let best = -1, bestD = 0.05;
   state.corner.pins.forEach((q, i) => { const d = Math.hypot((q.x - p.x) * a, q.y - p.y); if (d < bestD) { best = i; bestD = d; } });
   state.selected = dragging = best;
-  if (best >= 0) preview.setPointerCapture(e.pointerId);
+  if (best >= 0) { remember(); preview.setPointerCapture(e.pointerId); }
   publish();
 });
 preview.addEventListener("pointermove", e => {
@@ -152,14 +238,86 @@ preview.addEventListener("pointermove", e => {
 });
 preview.addEventListener("pointerup", () => { dragging = -1; });
 preview.addEventListener("pointerleave", () => { pointer = null; });
-$("restartHunt").addEventListener("click", () => { state.hunt = newHunt(); });
+// ---- Running the hunt by hand ----------------------------------------------------------------
+const restartHunt = () => { state.hunt = newHunt(); };
+const huntBack = () => stepBack(state.hunt);
+const huntSkip = () => reachNext(state.hunt, Date.now());
+const huntPause = () => { huntPaused = !huntPaused; $("huntPause").classList.toggle("on", huntPaused); $("huntPause").textContent = huntPaused ? "Paused" : "Pause"; };
+$("restartHunt").addEventListener("click", restartHunt);
+$("huntBack").addEventListener("click", huntBack);
+$("huntSkip").addEventListener("click", huntSkip);
+$("huntPause").addEventListener("click", huntPause);
+
+// ---- Keyboard --------------------------------------------------------------------------------
 window.addEventListener("keydown", e => {
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  const cmd = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
+  if (cmd && key === "z") { e.preventDefault(); return undo(!e.shiftKey); }
+  if (cmd || e.altKey) return; // leave the app's and browser's own shortcuts alone
+  const mode = { 1: "frame", 2: "fit", 3: "play", 4: "off" }[e.key];
+  if (mode) return setMode(mode);
+  const act = { b: toggleBlackout, p: huntPause, "[": huntBack, "]": huntSkip, r: restartHunt }[key];
+  if (act) { e.preventDefault(); return act(); }
+  if (e.key === "Escape") { state.selected = -1; return publish(); }
+  if (e.key === "Tab" && state.mode === "fit") {
+    e.preventDefault();
+    state.selected = ((state.selected < 0 ? (e.shiftKey ? 0 : -1) : state.selected) + (e.shiftKey ? 5 : 1)) % 6;
+    return publish();
+  }
   const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
-  if (!step || state.selected < 0 || e.target.tagName === "INPUT") return;
+  if (!step || state.selected < 0) return;
   e.preventDefault();
+  if (performance.now() - lastNudge > 1000) remember(); // a run of nudges undoes as one
+  lastNudge = performance.now();
   const size = projSize || { w: 1920, h: 1080 }, by = e.shiftKey ? 10 : 1, p = state.corner.pins[state.selected];
   state.corner.pins[state.selected] = { x: p.x + step[0] * by / size.w, y: p.y + step[1] * by / size.h };
   publish();
+});
+
+// ---- Setups: saved by name here, or as files to keep with the project ------------------------
+const setupStatus = (text, ok = true) => { $("setupStatus").textContent = text; $("setupStatus").className = `status ${ok ? "ok" : ""}`; };
+function listSetups(pick) {
+  const names = Object.keys(savedSetups()).sort(), list = $("setupList");
+  list.innerHTML = "";
+  if (!names.length) list.add(new Option("No saved setups yet", ""));
+  for (const n of names) list.add(new Option(n, n, false, n === pick));
+  $("loadSetup").disabled = $("deleteSetup").disabled = !names.length;
+}
+function useSetup(setup, from) {
+  if (setup?.app !== "zones-corner" || setup.corner?.pins?.length !== 6) return setupStatus(`${from} isn't a corner setup`, false);
+  remember();
+  applySetup(state, setup);
+  showSizes(); showOutput(); publish();
+  setupStatus(`Loaded ${from}`);
+}
+$("saveSetup").addEventListener("click", () => {
+  const name = $("setupName").value.trim() || new Date().toLocaleString();
+  storeSetups({ ...savedSetups(), [name]: setupOf(state) });
+  listSetups(name);
+  setupStatus(`Saved “${name}”`);
+});
+$("loadSetup").addEventListener("click", () => { const n = $("setupList").value; if (n) useSetup(savedSetups()[n], `“${n}”`); });
+$("deleteSetup").addEventListener("click", () => {
+  const n = $("setupList").value, all = savedSetups();
+  if (!n || !confirm(`Delete the setup “${n}”?`)) return;
+  delete all[n]; storeSetups(all); listSetups(); setupStatus(`Deleted “${n}”`);
+});
+$("exportSetup").addEventListener("click", () => {
+  const name = `zones-corner-${($("setupName").value.trim() || "setup").replace(/[^\w-]+/g, "-").toLowerCase()}.json`;
+  const text = JSON.stringify(setupOf(state), null, 2);
+  if (IN_APP) return window.webkit.messageHandlers.file.postMessage({ action: "save", name, text }); // the app asks where
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([text], { type: "application/json" })), download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  setupStatus(`Saved ${name} to Downloads`);
+});
+window.zonesSaved = path => setupStatus(`Saved ${path}`);
+$("importSetup").addEventListener("click", () => $("importFile").click());
+$("importFile").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try { useSetup(JSON.parse(await file.text()), file.name); } catch { setupStatus(`${file.name} couldn't be read`, false); }
+  e.target.value = "";
 });
 
 // In Zones.app, the app puts the picture on the projector and says which one.
@@ -185,7 +343,7 @@ $("simBtn").addEventListener("click", () => {
   sim = null;
 });
 const pictureAspect = () => preview.width / preview.height;
-$("exactBtn").addEventListener("click", () => { state.corner.pins = sim.exactPins(state.corner, pictureAspect()); publish(); });
+$("exactBtn").addEventListener("click", () => { remember(); state.corner.pins = sim.exactPins(state.corner, pictureAspect()); publish(); });
 const roomView = $("roomView"), roomAt = e => { const r = roomView.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
 roomView.addEventListener("pointerdown", e => { roomView.setPointerCapture(e.pointerId); simTouch = sim?.touch(state.corner, roomAt(e)) || null; });
 roomView.addEventListener("pointermove", e => { if (e.buttons) simTouch = sim?.touch(state.corner, roomAt(e)) || null; });
@@ -258,10 +416,11 @@ function drawCamera() {
 
 function frame() {
   if (state.mode === "play") {
-    updateHunt(state.hunt, simTouch || pointer, Date.now());
+    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer, Date.now());
     bc.postMessage({ type: "hunt", hunt: state.hunt });
     const next = SCENES[state.hunt.step];
-    $("huntStatus").textContent = state.hunt.finished ? "Treasure found! Starting over soon." : `Next: ${next.name.toLowerCase()} (${next.id}) · step ${state.hunt.step + 1} of ${SCENES.length}`;
+    $("huntStatus").textContent = (huntPaused ? "Paused (touches are ignored) · " : "") +
+      (state.hunt.finished ? "Treasure found! Starting over soon." : `Next: ${next.name.toLowerCase()} (${next.id}) · step ${state.hunt.step + 1} of ${SCENES.length}`);
   }
   projection.draw(state);
   if (sim) {
@@ -274,11 +433,14 @@ function frame() {
   drawCamera();
   const alive = projSize && performance.now() - projSeen < 2500;
   const which = window.zonesApp?.projector && window.zonesApp.projector !== "none" ? ` on ${window.zonesApp.projector}` : "";
-  $("projStatus").textContent = alive ? `Projector window connected${which} · ${projSize.w} × ${projSize.h}` : "Projector window not open";
+  $("projStatus").textContent = alive ? `Projector window connected${which} · ${projSize.w} × ${projSize.h}${projFps ? ` · ${projFps} fps` : ""}` : "Projector window not open";
   $("projStatus").className = `status ${alive ? "ok" : ""}`;
   requestAnimationFrame(frame);
 }
 showSizes();
+showOutput();
+showUndo();
+listSetups();
 publish();
 window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; }, get sim() { return sim; } };
 requestAnimationFrame(frame);

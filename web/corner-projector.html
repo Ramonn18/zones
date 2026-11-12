@@ -28,7 +28,8 @@ bc.onmessage = ({ data }) => {
   if (data.type === "state") state = { ...data.state, hunt: state.hunt };
   if (data.type === "hunt") state.hunt = data.hunt;
 };
-const hello = () => bc.postMessage({ type: "hello", w: canvas.width, h: canvas.height });
+let fps = 0, frames = 0, counted = performance.now(); // how smoothly the projector's picture is drawn
+const hello = () => bc.postMessage({ type: "hello", w: canvas.width, h: canvas.height, fps });
 setInterval(hello, 1000);
 window.addEventListener("keydown", e => {
   if (e.key.toLowerCase() !== "f") return;
@@ -41,6 +42,8 @@ function frame() {
   const dpr = window.devicePixelRatio || 1, w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; hello(); }
   projection.draw(state);
+  frames++;
+  if (performance.now() - counted > 1000) { fps = Math.round(frames * 1000 / (performance.now() - counted)); frames = 0; counted = performance.now(); }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

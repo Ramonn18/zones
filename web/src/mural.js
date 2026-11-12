@@ -38,11 +38,26 @@ export function updateHunt(hunt, pointer, now) {
   const over = pointer && SCENES.find(s => Math.hypot(pointer.x - s.x, pointer.y - s.y) < s.r);
   if ((over?.id || null) !== hunt.hover) { hunt.hover = over?.id || null; hunt.hoverSince = now; }
   const target = SCENES[hunt.step];
-  if (target && hunt.hover === target.id && now - hunt.hoverSince > DWELL) {
-    hunt.reached[target.id] = now;
-    hunt.step++;
-    if (hunt.step === SCENES.length) hunt.finished = now;
-  }
+  if (target && hunt.hover === target.id && now - hunt.hoverSince > DWELL) reachNext(hunt, now);
+  return hunt;
+}
+
+// The next scene is reached (by a touch, or skipped to from the corner page).
+export function reachNext(hunt, now) {
+  const target = SCENES[hunt.step];
+  if (!target) return hunt;
+  hunt.reached[target.id] = now;
+  hunt.step++;
+  if (hunt.step === SCENES.length) hunt.finished = now;
+  return hunt;
+}
+
+// One scene back: the last one reached isn't any more.
+export function stepBack(hunt) {
+  if (hunt.step === 0) return hunt;
+  hunt.step--;
+  delete hunt.reached[SCENES[hunt.step].id];
+  hunt.finished = 0;
   return hunt;
 }
 

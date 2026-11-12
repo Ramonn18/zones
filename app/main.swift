@@ -12,7 +12,7 @@ let base = "http://localhost:\(port)/"
 struct Known: Decodable { let name: String; let vendor: UInt32?; let model: UInt32?; let serial: UInt32? }
 struct KnownList: Decodable { let projectors: [Known] }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
   var control: NSWindow!, projector: NSWindow!
   var controlView: WKWebView!, projectorView: WKWebView!
   var server: Process?
@@ -68,7 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     let view = WKWebView(frame: .zero, configuration: config)
     view.isInspectable = true
     config.userContentController.add(self, name: "camera")
+    config.userContentController.add(self, name: "file")
     view.navigationDelegate = self
+    view.uiDelegate = self
     return view
   }
   func load(_ view: WKWebView, _ page: String) { view.load(URLRequest(url: URL(string: base + page)!)) }
@@ -133,6 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   // ---- The camera (the page asks through window.webkit.messageHandlers.camera) ----------------
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
     guard let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
+    if message.name == "file" {
+      if action == "save", let name = body["name"] as? String, let text = body["text"] as? String { saveFile(name, text) }
+      return
+    }
     if action == "list" {
       AVCaptureDevice.requestAccess(for: .video) { granted in DispatchQueue.main.async {
         guard granted else { return self.callPage("zonesCameraError", "Camera access is off: allow Zones in System Settings > Privacy & Security > Camera.") }
@@ -148,6 +154,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   func callPage(_ fn: String, _ arg: Any) {
     guard let data = try? JSONSerialization.data(withJSONObject: arg, options: [.fragmentsAllowed]), let json = String(data: data, encoding: .utf8) else { return }
     controlView.evaluateJavaScript("window.\(fn)?.(\(json))", completionHandler: nil)
+  }
+
+  // ---- Files and dialogs (a web view has none of its own) ---------------------------------------
+  // Saves a setup where the person picks, starting in the project's setups folder.
+  func saveFile(_ name: String, _ text: String) {
+    let panel = NSSavePanel(), folder = root.appendingPathComponent("setups")
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    panel.directoryURL = folder
+    panel.nameFieldStringValue = name
+    panel.beginSheetModal(for: control) { result in
+      guard result == .OK, let url = panel.url else { return }
+      do { try text.write(to: url, atomically: true, encoding: .utf8); self.callPage("zonesSaved", url.path) }
+      catch { self.callPage("zonesSaved", "nothing: \(error.localizedDescription)") }
+    }
+  }
+  // <input type=file>
+  func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+    panel.canChooseDirectories = false
+    panel.directoryURL = root.appendingPathComponent("setups")
+    panel.beginSheetModal(for: control) { result in completionHandler(result == .OK ? panel.urls : nil) }
+  }
+  // confirm() and alert()
+  func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+    let alert = NSAlert()
+    alert.messageText = message
+    alert.addButton(withTitle: "OK")
+    alert.addButton(withTitle: "Cancel")
+    alert.beginSheetModal(for: control) { completionHandler($0 == .alertFirstButtonReturn) }
+  }
+  func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+    let alert = NSAlert()
+    alert.messageText = message
+    alert.beginSheetModal(for: control) { _ in completionHandler() }
   }
 
   // ---- Server and lifecycle ----------------------------------------------------------------
