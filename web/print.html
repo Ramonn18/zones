@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zones markers</title>
+<style>
+  body { margin: 1cm; font: 12pt/1.4 system-ui, -apple-system, sans-serif; color: #111; background: #fff; }
+  h1 { font-size: 16pt; margin: 0 0 4mm; }
+  p { margin: 0 0 6mm; color: #444; }
+  .sheet { display: flex; flex-wrap: wrap; gap: 8mm; }
+  figure { margin: 0; text-align: center; break-inside: avoid; }
+  figcaption { font-size: 10pt; margin-top: 2mm; }
+  canvas { display: block; }
+  @media print { button { display: none; } }
+</style>
+<script src="vendor/aruco/cv.js"></script>
+<script src="vendor/aruco/aruco.js"></script>
+<script src="vendor/aruco/aruco_4x4_1000.js"></script>
+</head>
+<body>
+<h1>Zones markers</h1>
+<p>Print at 100% scale (no "fit to page"), then check one with a ruler: each is printed at its true size.
+Rim markers go on the table's edge at north, east, south and west, <span id="inset"></span> in from the edge.
+Each object's marker goes flat on top of it, with the arrow pointing the way the object faces.</p>
+<button onclick="print()">Print</button>
+<div class="sheet" id="sheet"></div>
+<script type="module">
+import { OBJECTS, RIM, currentEnvironment } from "./src/environment.js";
+import { drawMarker } from "./src/markers.js";
+
+const env = currentEnvironment(), sheet = document.getElementById("sheet");
+document.getElementById("inset").textContent = `${env.markers.inset} cm`;
+function add(marker, cm, caption, arrow) {
+  const px = 400, c = Object.assign(document.createElement("canvas"), { width: px, height: px + (arrow ? 60 : 0) });
+  c.style.width = `${cm}cm`;
+  const g = c.getContext("2d");
+  if (arrow) { // the way the object faces: the code's top edge
+    g.fillStyle = "#111"; g.beginPath(); g.moveTo(px / 2, 4); g.lineTo(px / 2 + 26, 52); g.lineTo(px / 2 - 26, 52); g.fill();
+    g.translate(0, 60);
+  }
+  drawMarker(g, marker, px / 2, px / 2, px);
+  const f = document.createElement("figure");
+  f.append(c, Object.assign(document.createElement("figcaption"), { textContent: caption }));
+  sheet.append(f);
+}
+for (const m of RIM) add(m.marker, env.markers.rim, `Rim ${m.name} (${env.markers.rim} cm)`);
+for (const o of OBJECTS) add(o.marker, env.markers.objects, `${o.name} (${env.markers.objects} cm), arrow = front`, true);
+</script>
+</body>
+</html>

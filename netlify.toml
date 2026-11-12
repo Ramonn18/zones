@@ -1,0 +1,3 @@
+# Publishing on Netlify: the site is the web folder
+[build]
+  publish = "web"

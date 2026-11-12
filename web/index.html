@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zones</title>
+<style>
+  :root { --bg: #0b1220; --panel: #121a2b; --line: #22304a; --text: #e8eef7; --dim: #93a0b2; --accent: #facc15; --ok: #4ade80; --bad: #fb7185; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+  main { display: grid; grid-template-columns: 1fr 360px; height: 100vh; }
+  #stage { position: relative; min-height: 0; }
+  #view { width: 100%; height: 100%; display: block; touch-action: none; }
+  #cameraBox { position: absolute; right: 12px; bottom: 12px; width: 32%; max-width: 420px; display: none; }
+  #cameraBox canvas { width: 100%; display: block; border: 1px solid var(--line); border-radius: 8px; background: #000; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  h1 { margin: 0; font-size: 18px; }
+  h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--dim); }
+  section { border-top: 1px solid var(--line); padding-top: 12px; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; color: var(--dim); }
+  input, select, button { font: inherit; color: var(--text); background: #1b2740; border: 1px solid #2c3d5e; border-radius: 6px; padding: 5px 9px; }
+  input[type=number] { width: 80px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .status { color: var(--dim); font-size: 13px; margin-top: 6px; }
+  .status.ok { color: var(--ok); } .status.bad { color: var(--bad); }
+  .obj { border: 1px solid var(--line); border-left: 4px solid; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+  .obj b { font-size: 14px; }
+  .obj div { color: var(--dim); font-size: 13px; }
+  .obj div span { color: var(--text); }
+  .hint { color: var(--dim); font-size: 12px; }
+</style>
+<script src="vendor/aruco/cv.js"></script>
+<script src="vendor/aruco/aruco.js"></script>
+<script src="vendor/aruco/aruco_4x4_1000.js"></script>
+</head>
+<body>
+<main>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="cameraBox"><canvas id="camera" width="960" height="540"></canvas></div>
+  </div>
+  <aside>
+    <h1>Zones <small>A pirate table: zones, objects and the ways they face</small></h1>
+
+    <section>
+      <h2>Objects</h2>
+      <div id="objects"></div>
+      <p class="hint" id="simHint">Simulation: drag an object to move it, drag the dot at its arrow's tip to turn it.</p>
+    </section>
+
+    <section>
+      <h2>Source</h2>
+      <div class="row">
+        <button id="simBtn">Simulation</button>
+        <button id="camBtn">Camera</button>
+      </div>
+      <select id="camSelect" hidden></select>
+      <div class="status" id="sourceStatus"></div>
+    </section>
+
+    <section>
+      <h2>Environment</h2>
+      <label>Room <select id="envSelect"></select></label>
+      <label>Table diameter (cm) <input id="diameter" type="number" min="40" max="400" step="1"></label>
+      <label>Camera height (cm) <input id="height" type="number" min="30" max="400" step="1"></label>
+      <div class="row">
+        <button id="newEnv">New room</button>
+        <button id="exportEnv">Export</button>
+        <button id="importEnv">Import</button>
+        <a href="print.html" target="_blank"><button>Print markers</button></a>
+      </div>
+      <input id="importFile" type="file" accept="application/json" hidden>
+    </section>
+  </aside>
+</main>
+
+<script type="module">
+// The page: the source of the objects (the simulation or the camera), the table's view, and
+// what each object relates to. window.zones is for poking at things from the console.
+import { OBJECTS, currentEnvironment, defaultEnvironment, listEnvironments, saveEnvironment, useEnvironment } from "./src/environment.js";
+import { lookout, relation, wind, zoneAt } from "./src/table.js";
+import { createView } from "./src/view.js";
+import { createSim } from "./src/sim.js";
+import { createTracker } from "./src/tracker.js";
+import { createReader } from "./src/markers.js";
+
+const $ = id => document.getElementById(id);
+const SIMCAM = new URLSearchParams(location.search).has("simcam"); // the simulation plays the camera, for testing
+
+let env = currentEnvironment();
+let sim = createSim(env);
+const view = createView($("view"));
+let tracker = createTracker(), reader = null;
+let source = SIMCAM ? "camera" : "sim", video = null, objects = sim.objects, tableFound = 0;
+
+// ---- Environment ------------------------------------------------------------------------
+function showEnvironments() {
+  const select = $("envSelect");
+  select.innerHTML = "";
+  for (const name of Object.keys(listEnvironments())) select.add(new Option(name, name, false, name === env.name));
+  $("diameter").value = env.table.diameter;
+  $("height").value = env.camera.height;
+}
+function changed() { saveEnvironment(env); sim = createSim(env); if (source === "sim") objects = sim.objects; tracker = createTracker(); }
+$("envSelect").addEventListener("change", e => { useEnvironment(e.target.value); env = currentEnvironment(); changed(); showEnvironments(); });
+$("diameter").addEventListener("change", e => { env.table.diameter = Math.max(40, +e.target.value || 120); changed(); });
+$("height").addEventListener("change", e => { env.camera.height = Math.max(30, +e.target.value || 100); changed(); });
+$("newEnv").addEventListener("click", () => {
+  const name = prompt("Name of the room:", "New room");
+  if (!name) return;
+  env = defaultEnvironment(name);
+  changed();
+  showEnvironments();
+});
+$("exportEnv").addEventListener("click", () => {
+  const a = Object.assign(document.createElement("a"), { download: `${env.name}.json`, href: URL.createObjectURL(new Blob([JSON.stringify(env, null, 2)], { type: "application/json" })) });
+  a.click();
+});
+$("importEnv").addEventListener("click", () => $("importFile").click());
+$("importFile").addEventListener("change", async e => {
+  try { env = JSON.parse(await e.target.files[0].text()); changed(); showEnvironments(); }
+  catch { setStatus("That file isn't an environment.", "bad"); }
+});
+
+// ---- Source -----------------------------------------------------------------------------
+const setStatus = (text, kind = "") => { $("sourceStatus").textContent = text; $("sourceStatus").className = `status ${kind}`; };
+$("simBtn").addEventListener("click", () => { source = "sim"; objects = sim.objects; $("cameraBox").style.display = "none"; setStatus(""); });
+$("camBtn").addEventListener("click", () => startCamera().catch(err => setStatus(`Camera failed: ${err.message || err.name}`, "bad")));
+$("camSelect").addEventListener("change", e => startCamera(e.target.value).catch(err => setStatus(`Camera failed: ${err.message || err.name}`, "bad")));
+
+async function startCamera(deviceId) {
+  reader ||= createReader();
+  if (SIMCAM) { source = "camera"; $("cameraBox").style.display = "block"; return; }
+  video?.srcObject?.getTracks().forEach(t => t.stop());
+  video ||= Object.assign(document.createElement("video"), { muted: true, playsInline: true });
+  const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  video.srcObject = await navigator.mediaDevices.getUserMedia({ audio: false, video: deviceId ? { deviceId: { exact: deviceId }, ...size } : size });
+  await video.play();
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  const active = video.srcObject.getVideoTracks()[0].getSettings().deviceId, select = $("camSelect");
+  select.innerHTML = "";
+  for (const c of cams) select.add(new Option(c.label || "Camera", c.deviceId, false, c.deviceId === active));
+  select.hidden = false;
+  // An iPhone (Continuity Camera) is the one we want, but never its Desk View, which bends the picture.
+  const phone = cams.find(c => /iphone/i.test(c.label) && !/desk view/i.test(c.label));
+  if (!deviceId && phone && phone.deviceId !== active) return startCamera(phone.deviceId);
+  source = "camera";
+  $("cameraBox").style.display = "block";
+}
+
+// Reads the markers in the latest picture: the whole picture for the table's rim markers, then
+// the table, enlarged, for the objects' smaller markers.
+const ZOOM = 2;
+function scan(picture) {
+  if (!reader) return;
+  const seen = reader(picture), region = tracker.tableRegion(env);
+  if (region) {
+    const close = reader(picture, region, ZOOM);
+    for (const m of close) if (!seen.some(s => s.id === m.id)) seen.push(m);
+  }
+  const result = tracker.update(env, seen, performance.now());
+  tableFound = result.found;
+  if (source === "camera") objects = result.objects;
+}
+
+function drawCamera(picture) {
+  const c = $("camera"), g = c.getContext("2d"), w = picture.videoWidth || picture.width, h = picture.videoHeight || picture.height;
+  if (!w) return;
+  c.height = Math.round(c.width * h / w);
+  g.drawImage(picture, 0, 0, c.width, c.height);
+  if (!tracker.ready) return;
+  const k = c.width / w; // the table's edge, as the camera sees it: shows whether it was found right
+  g.strokeStyle = "#facc15"; g.lineWidth = 3; g.beginPath();
+  for (let i = 0; i <= 64; i++) {
+    const a = i / 64 * Math.PI * 2, p = tracker.toPicture({ x: Math.sin(a) * env.table.diameter / 2, y: -Math.cos(a) * env.table.diameter / 2 });
+    g.lineTo(p.x * k, p.y * k);
+  }
+  g.stroke();
+}
+
+// ---- Simulation: dragging and turning -----------------------------------------------------
+let held = null;
+const cssPoint = e => { const r = $("view").getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+$("view").addEventListener("pointerdown", e => {
+  if (source !== "sim") return;
+  held = view.hit(objects, cssPoint(e));
+  if (held) $("view").setPointerCapture(e.pointerId);
+});
+$("view").addEventListener("pointermove", e => {
+  if (!held) return;
+  const p = view.toTable(cssPoint(e)), o = held.object;
+  if (held.turn) o.heading = (Math.atan2(p.x - o.x, -(p.y - o.y)) * 180 / Math.PI + 360) % 360;
+  else { o.x = p.x; o.y = p.y; }
+});
+$("view").addEventListener("pointerup", () => { held = null; });
+
+// ---- What each object relates to ---------------------------------------------------------
+function describe() {
+  const html = OBJECTS.map(def => {
+    const o = objects.find(x => x.id === def.id);
+    if (!o) return `<div class="obj" style="border-left-color:${def.color}"><b>${def.name}</b><div>Not on the table</div></div>`;
+    const zone = zoneAt(env, o), look = lookout(env, o, objects);
+    const ahead = look.ahead[0] ? `${look.ahead[0].object.name}, ${Math.round(look.ahead[0].distance)} cm` : "nothing";
+    const others = objects.filter(x => x.id !== o.id).map(x => `${x.name} ${relation(o, x)}`).join(" · ");
+    return `<div class="obj" style="border-left-color:${o.color}"><b>${o.name}</b>
+      <div>In <span>${zone ? zone.name : "off the table"}</span></div>
+      <div>Faces <span>${wind(o.heading)} (${Math.round(o.heading)}°)</span>, toward <span>${look.zones.map(z => z.name).join(" → ") || "the edge"}</span></div>
+      <div>Ahead: <span>${ahead}</span></div>
+      <div>${others}</div></div>`;
+  }).join("");
+  if ($("objects").innerHTML !== html) $("objects").innerHTML = html;
+  $("simHint").hidden = source !== "sim";
+  if (source === "camera") setStatus(tableFound === 4 ? `Table found · ${objects.length} of 3 objects seen` : `Looking for the table's rim markers: ${tableFound} of 4`, tableFound === 4 ? "ok" : "");
+}
+
+function frame() {
+  if (source === "camera") {
+    const picture = SIMCAM ? sim.cameraFrame(env) : video;
+    if (picture && (SIMCAM || video.readyState >= 2)) { scan(picture); drawCamera(picture); }
+  }
+  view.draw(env, objects);
+  describe();
+  requestAnimationFrame(frame);
+}
+
+showEnvironments();
+window.zones = { get env() { return env; }, get objects() { return objects; }, get sim() { return sim; }, get source() { return source; } };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
