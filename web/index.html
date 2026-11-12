@@ -66,6 +66,9 @@
       <label>Room <select id="envSelect"></select></label>
       <label>Table diameter (cm) <input id="diameter" type="number" min="40" max="400" step="1"></label>
       <label>Camera height (cm) <input id="height" type="number" min="30" max="400" step="1"></label>
+      <label>Real north (°) <input id="north" type="number" min="0" max="359" step="1"></label>
+      <p class="hint">Stand at the table with the iPhone's Compass app, point it from the center toward the rim's N marker, and enter the degrees it shows.</p>
+      <label>Landmarks <input id="landmarks" type="text" style="width:170px" placeholder="Door 135, Window 270"></label>
       <div class="row">
         <button id="newEnv">New room</button>
         <button id="exportEnv">Export</button>
@@ -80,8 +83,8 @@
 <script type="module">
 // The page: the source of the objects (the simulation or the camera), the table's view, and
 // what each object relates to. window.zones is for poking at things from the console.
-import { OBJECTS, currentEnvironment, defaultEnvironment, listEnvironments, saveEnvironment, useEnvironment } from "./src/environment.js";
-import { lookout, relation, wind, zoneAt } from "./src/table.js";
+import { OBJECTS, complete, currentEnvironment, defaultEnvironment, listEnvironments, saveEnvironment, useEnvironment } from "./src/environment.js";
+import { lookout, real, relation, wind, zoneAt } from "./src/table.js";
 import { createView } from "./src/view.js";
 import { createSim } from "./src/sim.js";
 import { createTracker } from "./src/tracker.js";
@@ -103,11 +106,21 @@ function showEnvironments() {
   for (const name of Object.keys(listEnvironments())) select.add(new Option(name, name, false, name === env.name));
   $("diameter").value = env.table.diameter;
   $("height").value = env.camera.height;
+  $("north").value = env.room.north;
+  $("landmarks").value = env.room.landmarks.map(l => `${l.name} ${l.bearing}`).join(", ");
 }
 function changed() { saveEnvironment(env); sim = createSim(env); if (source === "sim") objects = sim.objects; tracker = createTracker(); }
 $("envSelect").addEventListener("change", e => { useEnvironment(e.target.value); env = currentEnvironment(); changed(); showEnvironments(); });
 $("diameter").addEventListener("change", e => { env.table.diameter = Math.max(40, +e.target.value || 120); changed(); });
 $("height").addEventListener("change", e => { env.camera.height = Math.max(30, +e.target.value || 100); changed(); });
+$("north").addEventListener("change", e => { env.room.north = ((+e.target.value || 0) % 360 + 360) % 360; changed(); });
+// "Door 135, Window 270": a name and its real bearing, for each thing in the room.
+$("landmarks").addEventListener("change", e => {
+  env.room.landmarks = e.target.value.split(",").map(t => t.trim().match(/^(.*\S)\s+(\d+(?:\.\d+)?)$/)).filter(Boolean)
+    .map(m => ({ name: m[1], bearing: +m[2] % 360 }));
+  changed();
+  showEnvironments();
+});
 $("newEnv").addEventListener("click", () => {
   const name = prompt("Name of the room:", "New room");
   if (!name) return;
@@ -121,7 +134,7 @@ $("exportEnv").addEventListener("click", () => {
 });
 $("importEnv").addEventListener("click", () => $("importFile").click());
 $("importFile").addEventListener("change", async e => {
-  try { env = JSON.parse(await e.target.files[0].text()); changed(); showEnvironments(); }
+  try { env = complete(JSON.parse(await e.target.files[0].text())); changed(); showEnvironments(); }
   catch { setStatus("That file isn't an environment.", "bad"); }
 });
 
@@ -204,10 +217,11 @@ function describe() {
     if (!o) return `<div class="obj" style="border-left-color:${def.color}"><b>${def.name}</b><div>Not on the table</div></div>`;
     const zone = zoneAt(env, o), look = lookout(env, o, objects);
     const ahead = look.ahead[0] ? `${look.ahead[0].object.name}, ${Math.round(look.ahead[0].distance)} cm` : "nothing";
-    const others = objects.filter(x => x.id !== o.id).map(x => `${x.name} ${relation(o, x)}`).join(" · ");
+    const others = objects.filter(x => x.id !== o.id).map(x => `${x.name} ${relation(env, o, x)}`).join(" · ");
+    const toward = [...look.zones.map(z => z.name), ...look.landmarks.map(l => `the ${l.name.toLowerCase()}`)];
     return `<div class="obj" style="border-left-color:${o.color}"><b>${o.name}</b>
       <div>In <span>${zone ? zone.name : "off the table"}</span></div>
-      <div>Faces <span>${wind(o.heading)} (${Math.round(o.heading)}°)</span>, toward <span>${look.zones.map(z => z.name).join(" → ") || "the edge"}</span></div>
+      <div>Faces <span>${wind(real(env, o.heading))} (${Math.round(real(env, o.heading))}°)</span>, toward <span>${toward.join(" → ") || "the edge"}</span></div>
       <div>Ahead: <span>${ahead}</span></div>
       <div>${others}</div></div>`;
   }).join("");

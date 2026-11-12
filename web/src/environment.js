@@ -18,12 +18,16 @@ export const RIM = [
 const KEY = "zones-environments", CURRENT = "zones-environment";
 
 // sizes in centimeters. zones.center.radius: a fraction of the table's radius.
-// sectors: the zones around it, each centered on a compass bearing.
+// sectors: the zones around it, each centered on a real compass bearing (they turn with the room's north).
 export function defaultEnvironment(name = "Studio") {
   return {
     name,
     table: { diameter: 120 },
     camera: { height: 100 },
+    // The room around the table. north: the real compass bearing the rim's N marker points to (read
+    // it with the iPhone's Compass app). landmarks: things in the room and their real bearings.
+    room: { north: 0, landmarks: [{ name: "Door", bearing: 135 }, { name: "Window", bearing: 270 }] },
+    rim: 0.16, // the compass band around the edge, as a fraction of the table's radius: the rest is the play zone
     markers: { rim: 8, objects: 4, inset: 6 }, // marker sizes (rim, objects) and how far the rim markers sit in from the edge. Objects' markers read down to about 3.5 cm with the camera seeing the whole table
     zones: {
       center: { id: "eye", name: "The Calm Eye", color: "#7dd3fc", radius: 0.32 },
@@ -46,11 +50,17 @@ export function listEnvironments() {
   return all;
 }
 
+// Fills in anything an environment saved by an older version doesn't have yet.
+export function complete(env) {
+  const base = defaultEnvironment(env.name);
+  return { ...base, ...env, room: { ...base.room, ...env.room }, markers: { ...base.markers, ...env.markers } };
+}
+
 export function currentEnvironment() {
   const all = listEnvironments();
   let name = null;
   try { name = localStorage.getItem(CURRENT); } catch {}
-  return all[name] || Object.values(all)[0];
+  return complete(all[name] || Object.values(all)[0]);
 }
 
 export function saveEnvironment(env) {

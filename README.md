@@ -14,9 +14,9 @@ This is a fresh start. The first version, a projection-mapped pirate game, is ar
 
 A **round table** with three objects on it, **a pirate figure and two ships**, each carrying a small marker. An iPhone looks down at the table through **Continuity Camera** (nothing to install on the phone) and the Mac works out:
 
-- **Zones:** the table is divided into a center, *The Calm Eye*, and four seas around it, one per compass direction.
+- **Zones:** the middle of the table is the **play zone**: a center, *The Calm Eye*, and four seas around it, each toward a real compass direction. Around it, the table's edge is a **compass rim**, like a compass card: its degree ring follows the room's real north, things in the room (a door, a window) are marked at their real directions, and each object has a pointer on the rim that moves as it turns.
 - **Object and zone:** which zone each object is in.
-- **Directionality:** which way each object faces (a compass bearing), the zones its line of sight crosses, and the object it's facing.
+- **Directionality:** which way each object faces (a real compass bearing), the zones its line of sight crosses, the object it's facing, and the room's landmarks in that direction.
 - **Objects and each other:** how far apart they are and in which direction ("Ship 2, 31 cm southeast").
 
 Nothing is projected onto the table, so the markers stay readable.
@@ -43,7 +43,7 @@ Then open http://localhost:8010 in **Safari** (it can use the iPhone as a camera
 
 ### Rooms
 
-Each place the game runs is an **environment**: its table size, camera height and zones. **New room** makes one, and **Export** and **Import** move it between computers as a file.
+Each place the game runs is an **environment**: its table size, camera height, zones, its real north (read with the iPhone's built-in Compass app: point it from the table's center toward the rim's N marker) and its landmarks ("Door 135, Window 270"). **New room** makes one, and **Export** and **Import** move it between computers as a file.
 
 ### Markers
 
