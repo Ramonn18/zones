@@ -1,15 +1,19 @@
 // The corner's pirate world, like a chalk-line mural: white line drawings on black (black is no
-// light, so only the drawings shine on the wall). The illustrations come from art.js. Five scenes
-// are the stops of a treasure hunt: touch the compass to start, then find each stop in turn, to
-// the chest. Finding a stop draws a dotted trail from the stop before it, the way you came. Everything is in corner space (cm).
+// light, so only the drawings shine on the wall). The illustrations come from art.js. Five stops
+// make a treasure hunt: compass, ship, island, Kraken, chest. Everything is in corner space (cm).
 //
 // The map is uncovered as the hunt goes. Every hunt lays the mural out afresh: the compass lands
 // somewhere random on either wall, the other stops are spread out from it, and the walls are cut
-// into one zone per stop (each spot belongs to the stop nearest it). At first only the compass's
-// zone shows, and only a small circle of it around the compass, with a few drawings floating
-// around it (the rest of the compass's zone opens with the next one). Each stop found draws its
-// trail, then sets off a burst that blows the next zone open, drawing by drawing as its front passes, so the map grows zone by
-// zone and there's more and more to search through.
+// into one zone per stop (each spot belongs to the stop nearest it). At first only a small circle
+// around the compass shows, with a few drawings floating around it.
+//
+// It plays like Where's Waldo. Pointing at the compass blows the first zone open, and a poster
+// beside it says who to find: one little character with something subtly odd about it (a mermaid
+// in a pirate hat). Hidden in the zone are look-alikes: plain mermaids, and other characters in
+// the same hat. Pointing at a look-alike only makes it shake. Pointing at the right one turns it
+// into the stop it was hiding (the ship), draws a dotted trail from the stop before it, the way
+// you came, and then a burst blows the next zone open, with the next poster. The last one hides
+// the treasure.
 import { defaultCorner } from "./corner.js";
 
 const DWELL = 800;        // ms a hand has to stay on a scene to reach it
@@ -20,6 +24,11 @@ const BURST = 75;         // cm a second: how fast a zone's burst front spreads
 const POP_MS = 450;       // how long a drawing takes to pop in once the front reaches it
 const SPACING = 15;       // cm between the scenery's drawings
 const START_R = 30;       // cm: at first, only this close around the compass shows
+const PICK_R = 6;         // cm: how close counts as touching a hidden character, at least
+const NOPE_MS = 700;      // how long a look-alike shakes when it's picked
+const CLUE = { w: 34, h: 21 }; // the "find" poster's size (cm)
+const CLUE_WAIT = 900;    // ms after its zone starts opening that the poster shows
+const DECOYS = { same: 4, elsewhere: 2, sameAccessory: 2 }; // look-alikes per hidden character
 const INK = "#f4f1ea";
 
 // The hunt's stops, in order. size: how big it's drawn (cm); r: how close counts as touching it.
@@ -37,6 +46,26 @@ const SCENERY_ART = [
   ["bottle", 5], ["fish", 6], ["sun", 8], ["moon", 7], ["lighthouse", 9], ["flag", 6], ["skull", 6], ["whirlpool", 7],
   ["lifebuoy", 7], ["parrot", 8], ["mermaid", 9], ["stars", 6], ["star", 4], ["coins", 6], ["gem", 5], ["key", 6], ["waves", 9], ["waves", 9],
 ];
+// The characters that can hide a stop, and where on each an accessory goes, as fractions of its
+// size from its center: top (where a hat sits) and face (for a moustache). Measured on the art.
+export const CHARACTERS = {
+  mermaid: { name: "mermaid", size: 9, top: [-0.05, -0.39], face: [-0.05, -0.27] },
+  parrot: { name: "parrot", size: 8, top: [-0.04, -0.41] },
+  fish: { name: "fish", size: 7, top: [0.22, -0.28] },
+  skull: { name: "skull", size: 7, top: [0, -0.31], face: [0, 0.21] },
+  barrel: { name: "barrel", size: 7, top: [0, -0.33] },
+  sun: { name: "sun", size: 8, top: [0, -0.16], face: [0, 0.07] },
+  lighthouse: { name: "lighthouse", size: 9, top: [0, -0.37] },
+  anchor: { name: "anchor", size: 7, top: [0, -0.35] },
+};
+// What makes the hidden one different. scale: its size against the character's; lift: how far
+// above its spot it sits (fraction of the character's size).
+export const ACCESSORIES = {
+  pirateHat: { art: "pirateHat", words: "in a pirate hat", spot: "top", scale: 0.55, lift: 0.1 },
+  crown: { art: "crown", words: "with a crown", spot: "top", scale: 0.4, lift: 0.1 },
+  moustache: { art: "moustache", words: "with a moustache", spot: "face", scale: 0.32, lift: 0 },
+};
+
 // Drawings that float around the compass before the hunt starts, then fly off with its burst.
 const FLOATERS = [["star", 4], ["fish", 5], ["clouds", 6], ["star", 3]];
 
@@ -94,17 +123,68 @@ export function makeLayout(c, seed = Math.floor(Math.random() * 2 ** 31)) {
   const zones = scenes.map((_, i) => zoneOf(scenes, i, W, H));
   const nearest = p => scenes.reduce((best, s, i) => (dist(p, s) < dist(p, scenes[best]) ? i : best), 0);
   const zoneAt = p => { const i = nearest(p); return i === 0 && dist(p, scenes[0]) > START_R ? 1 : i; };
-  // Scenery: thrown at random, kept where it's clear of the stops, their labels and each other.
+  const pick = list => list[Math.floor(rand() * list.length)];
+
+  // Who hides each stop after the compass: a different character each time, with an accessory it can wear.
+  const bases = Object.keys(CHARACTERS).sort(() => rand() - 0.5);
+  const hidden = scenes.map((_, i) => {
+    if (i === 0) return null;
+    const base = bases[(i - 1) % bases.length], acc = pick(Object.keys(ACCESSORIES).filter(a => CHARACTERS[base][ACCESSORIES[a].spot]));
+    return { base, acc };
+  });
+
+  // Each hidden character's poster, beside the stop before it (where the players are looking):
+  // to its right, left, below its label or above it, wherever it fits on one wall, clear of the stops.
+  const clear = (i, p, room) => i === 0 ? dist(p, scenes[0]) > scenes[0].size * 0.7 + room : dist(p, scenes[i]) > CHARACTERS[hidden[i].base].size * 0.6 + room;
+  const inRect = (p, r, pad = 0) => Math.abs(p.x - r.x) < r.w / 2 + pad && Math.abs(p.y - r.y) < r.h / 2 + pad;
+  const clues = scenes.map((_, i) => {
+    if (i === 0) return null;
+    const prev = scenes[i - 1], reach = prev.size * 0.6 + 3; // the stop as it shows once found
+    const spots = [[reach + CLUE.w / 2, 0], [-reach - CLUE.w / 2, 0], [0, reach + 6 + CLUE.h / 2], [0, -reach - CLUE.h / 2]]
+      .map(([dx, dy]) => ({ x: prev.x + dx, y: prev.y + dy, ...CLUE }));
+    const inside = r => r.x - r.w / 2 > 1 && r.x + r.w / 2 < W - 1 && r.y - r.h / 2 > 1 && r.y + r.h / 2 < H - 1;
+    const good = r => inside(r) && (r.x + r.w / 2 < L - 1 || r.x - r.w / 2 > L + 1) && scenes.every((s, j) => j === i - 1 || !inRect(s, r, 8));
+    const r = spots.find(good) || spots.find(inside) || spots[0];
+    r.x = Math.min(W - r.w / 2 - 1, Math.max(r.w / 2 + 1, r.x)); r.y = Math.min(H - r.h / 2 - 1, Math.max(r.h / 2 + 1, r.y));
+    return r;
+  });
+
+  // Everything else on the walls, thrown at random where it fits: clear of the stops, the posters
+  // and each other. kind: what it is; returns whether it found a place.
   const scenery = [];
+  const fits = (p, size) => {
+    const half = size / 2;
+    if (p.x < half + 2 || p.x > W - half - 2 || p.y < half + 2 || p.y > H - half - 2 || !offFold(p.x, half * 0.6)) return false;
+    if (dist(p, scenes[0]) < scenes[0].size * 0.7 + half + 3 || dist(p, { x: scenes[0].x, y: scenes[0].y + scenes[0].size * 0.62 + 4 }) < 10 + half) return false;
+    if (dist(p, { x: scenes[0].x, y: scenes[0].y - scenes[0].size * 0.62 - 5 }) < 14) return false; // the compass's instructions
+    if (clues.some(r => r && inRect(p, r, half + 1.5))) return false;
+    return !scenery.some(o => dist(p, o) < SPACING * (0.6 + 0.4 * rand()) + (o.size + size) * 0.25);
+  };
+  const place = (item, where, tries = 300) => {
+    for (let k = 0; k < tries; k++) {
+      const p = where();
+      if (p && fits(p, item.size)) { scenery.push({ ...item, x: p.x, y: p.y, zone: zoneAt(p) }); return true; }
+    }
+    return false;
+  };
+  const anywhere = () => ({ x: rand() * W, y: rand() * H });
+  const inZone = i => () => { const p = anywhere(); return zoneAt(p) === i ? p : null; };
+  // The hidden ones first, right where their stops are, then their look-alikes.
+  hidden.forEach((h, i) => { if (h) scenery.push({ art: h.base, acc: h.acc, size: CHARACTERS[h.base].size, x: scenes[i].x, y: scenes[i].y, zone: i, role: "target", stop: i }); });
+  hidden.forEach((h, i) => {
+    if (!h) return;
+    const plain = { art: h.base, size: CHARACTERS[h.base].size, role: "decoy", stop: i };
+    for (let k = 0; k < DECOYS.same; k++) place(plain, inZone(i));
+    for (let k = 0; k < DECOYS.elsewhere; k++) place(plain, () => { const p = anywhere(); return zoneAt(p) <= i ? p : null; });
+    const others = Object.keys(CHARACTERS).filter(b => b !== h.base && CHARACTERS[b][ACCESSORIES[h.acc].spot]);
+    for (let k = 0; k < DECOYS.sameAccessory; k++) { const b = pick(others); place({ art: b, acc: h.acc, size: CHARACTERS[b].size, role: "decoy", stop: i }, inZone(i)); }
+  });
+  // Then the scenery, filling the rest.
   for (let k = 0; k < 4000 && scenery.length < 400; k++) {
-    const [art, size] = SCENERY_ART[Math.floor(rand() * SCENERY_ART.length)], p = { x: rand() * W, y: rand() * H }, half = size / 2;
-    if (p.x < half + 2 || p.x > W - half - 2 || p.y < half + 2 || p.y > H - half - 2 || !offFold(p.x, half * 0.6)) continue;
-    if (scenes.some(s => dist(p, s) < s.size * 0.7 + half + 3 || dist(p, { x: s.x, y: s.y + s.size * 0.62 + 4 }) < 10 + half)) continue;
-    if (scenes[0] && dist(p, { x: scenes[0].x, y: scenes[0].y - scenes[0].size * 0.62 - 5 }) < 14) continue; // the compass's instructions
-    if (scenery.some(o => dist(p, o) < SPACING * (0.6 + 0.4 * rand()) + (o.size + size) * 0.25)) continue;
-    scenery.push({ art, x: p.x, y: p.y, size, zone: zoneAt(p) });
+    const [art, size] = pick(SCENERY_ART);
+    place({ art, size }, anywhere, 1);
   }
-  return { seed, corner: { left: { width: L }, right: { width: c.right.width }, height: H }, scenes, zones, start: START_R, scenery };
+  return { seed, corner: { left: { width: L }, right: { width: c.right.width }, height: H }, scenes, zones, start: START_R, hidden, clues, scenery };
 }
 
 // Whether a layout was made for walls this size.
@@ -142,22 +222,47 @@ export const muralObjects = hunt => !hunt?.layout ? [] : [
   ...hunt.layout.scenery.map((o, i) => ({ key: `scenery:${i}`, x: o.x, y: o.y, r: o.size * 0.6 })),
 ];
 const moved = (moves, key) => moves?.[key] || [0, 0];
-// The stops where they are now (moved out of people's way). With now: only those uncovered so far.
-export function placedScenes(hunt, moves, now) {
-  if (!hunt?.layout) return [];
-  return hunt.layout.scenes
-    .map((s, i) => { const [dx, dy] = moved(moves, `scene:${s.id}`); return { ...s, x: s.x + dx, y: s.y + dy, zone: i }; })
-    .filter(s => now === undefined || popOf(hunt, s.zone, hunt.layout.scenes[s.zone], now) > 0.5);
+// The stops where they are now (moved out of people's way).
+function placedScenes(hunt, moves) {
+  return hunt.layout.scenes.map(s => { const [dx, dy] = moved(moves, `scene:${s.id}`); return { ...s, x: s.x + dx, y: s.y + dy }; });
+}
+
+// What can be pointed at right now, where it is: the compass before the start; after that, the
+// hidden character of the stop being looked for (id: the stop's id) and its look-alikes
+// (id: "decoy:<index>"). Only what's been uncovered. [{ id, x, y, r, size }]
+export function pickables(hunt, moves, now) {
+  if (!hunt?.layout || hunt.finished) return [];
+  if (hunt.step === 0) {
+    const s = placedScenes(hunt, moves)[0];
+    return popOf(hunt, 0, hunt.layout.scenes[0], now) > 0.5 ? [s] : [];
+  }
+  return hunt.layout.scenery.flatMap((o, k) => {
+    if (o.stop !== hunt.step || popOf(hunt, o.zone, o, now) < 0.5) return [];
+    const [dx, dy] = moved(moves, `scenery:${k}`);
+    return [{ id: o.role === "target" ? SCENES[o.stop].id : `decoy:${k}`, x: o.x + dx, y: o.y + dy, r: Math.max(PICK_R, o.size * 0.75), size: o.size }];
+  });
+}
+
+// Who to find now, in words ("the mermaid in a pirate hat"), or null.
+export function clueOf(hunt) {
+  const h = hunt?.layout?.hidden[hunt.step];
+  return h && !hunt.finished ? `the ${CHARACTERS[h.base].name} ${ACCESSORIES[h.acc].words}` : null;
 }
 
 // pointer: where a hand (for now, the mouse) touches the corner (cm), or null. moves: where the
-// drawings have moved to, making way for people.
+// drawings have moved to, making way for people. Holding on the right one reaches the next stop;
+// holding on a look-alike makes it shake (hunt.nope).
 export function updateHunt(hunt, pointer, now, moves) {
   if (hunt.finished && now - hunt.finished > FINALE_MS) Object.assign(hunt, newHunt(hunt.layout.corner, now));
-  const over = pointer && placedScenes(hunt, moves, now).find(s => Math.hypot(pointer.x - s.x, pointer.y - s.y) < s.r);
+  const over = pointer && pickables(hunt, moves, now)
+    .filter(s => Math.hypot(pointer.x - s.x, pointer.y - s.y) < s.r)
+    .sort((a, b) => Math.hypot(pointer.x - a.x, pointer.y - a.y) - Math.hypot(pointer.x - b.x, pointer.y - b.y))[0];
   if ((over?.id || null) !== hunt.hover) { hunt.hover = over?.id || null; hunt.hoverSince = now; }
   const target = SCENES[hunt.step];
-  if (target && hunt.hover === target.id && now - hunt.hoverSince > DWELL) reachNext(hunt, now);
+  if (hunt.hover && now - hunt.hoverSince > DWELL) {
+    if (target && hunt.hover === target.id) reachNext(hunt, now);
+    else if (hunt.hover.startsWith("decoy:")) { hunt.nope = { id: hunt.hover, at: now }; hunt.hoverSince = now + NOPE_MS; } // wait before it can shake again
+  }
   return hunt;
 }
 
@@ -214,6 +319,34 @@ function aimLine(ctx, artist, aim, scenes, now) {
   if (hit) artist.ellipse(hit.x, hit.y, hit.size * 1.5, hit.size * 1.5, { seed: Math.floor(now / 125) % 6 + 20, roughness: 1.2, strokeWidth: 0.5 });
 }
 
+// A character, and the accessory it wears if any. opts as for artist.draw.
+export function drawCharacter(artist, base, acc, x, y, size, opts = {}) {
+  artist.draw(base, x, y, size, opts);
+  const a = ACCESSORIES[acc], spot = a && CHARACTERS[base]?.[a.spot];
+  if (!spot) return;
+  const rot = opts.rotate || 0, ox = spot[0] * size, oy = (spot[1] - a.lift) * size;
+  artist.draw(a.art, x + ox * Math.cos(rot) - oy * Math.sin(rot), y + ox * Math.sin(rot) + oy * Math.cos(rot), size * a.scale,
+    { ...opts, line: (opts.line || 0.45) * 0.85, seed: (opts.seed || 0) + 5 });
+}
+
+// The "find" poster: a sketchy frame with the hidden character drawn big and its description.
+function poster(ctx, artist, r, h, now, show) {
+  const ch = CHARACTERS[h.base], k = easePop(show);
+  if (!k) return;
+  ctx.save();
+  ctx.translate(r.x, r.y); ctx.scale(k, k);
+  ctx.fillStyle = "#000"; ctx.fillRect(-r.w / 2, -r.h / 2, r.w, r.h);
+  const seed = Math.floor(now / 125) % 6 + 60;
+  artist.rect(-r.w / 2 + 0.5, -r.h / 2 + 0.5, r.w - 1, r.h - 1, { seed, roughness: 1.2, strokeWidth: 0.4 });
+  ctx.font = "800 2.6px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = INK;
+  ctx.fillText("F I N D", 0, -r.h / 2 + 3);
+  drawCharacter(artist, h.base, h.acc, 0, -0.5, Math.min(11, r.h * 0.5), { seed: 80, now, line: 0.45 });
+  ctx.font = "700 1.9px system-ui";
+  ctx.fillText(`THE ${ch.name.toUpperCase()}`, 0, r.h / 2 - 5);
+  ctx.fillText(ACCESSORIES[h.acc].words.toUpperCase(), 0, r.h / 2 - 2.6);
+  ctx.restore();
+}
+
 // A zone's burst: a sketchy ring (and a lagging second one) spreading from where it opened, with
 // sparks flying ahead of it, all kept inside the zone it's uncovering.
 function burst(ctx, artist, hunt, i, now) {
@@ -253,12 +386,20 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
   ctx.save(); ctx.scale(px, px);
   ctx.lineCap = ctx.lineJoin = "round";
 
+  // A stop that's been found clears the drawings off its patch, so it and its label have room.
+  const found = layout.scenes.filter((s, i) => i > 0 && hunt.reached[s.id]);
   layout.scenery.forEach((o, i) => {
-    const pop = easePop(popOf(hunt, o.zone, o, now));
+    if (o.role === "target" && hunt.reached[SCENES[o.stop].id]) return; // it's turned into its stop
+    let pop = easePop(popOf(hunt, o.zone, o, now));
+    for (const s of found) {
+      const near = dist(o, s) < s.size * 0.7 + o.size / 2 + 1 || dist(o, { x: s.x, y: s.y + s.size * 0.62 + 3.5 }) < 9 + o.size / 2;
+      if (near) pop *= Math.max(0, 1 - (now - hunt.reached[s.id]) / 400);
+    }
     if (!pop) return;
+    const nope = hunt.nope?.id === `decoy:${i}` ? Math.max(0, 1 - (now - hunt.nope.at) / NOPE_MS) : 0;
     const [dx, dy] = moved(moves, `scenery:${i}`), drift = o.art === "waves" ? 1.5 : 0.7; // everything floats a little
-    artist.draw(o.art, o.x + dx + Math.sin(now / 2100 + i) * drift, o.y + dy + Math.sin(now / 1500 + i * 1.7) * 0.6, o.size * pop,
-      { seed: i % 12, now, line: 0.35 });
+    drawCharacter(artist, o.art, o.acc, o.x + dx + Math.sin(now / 2100 + i) * drift, o.y + dy + Math.sin(now / 1500 + i * 1.7) * 0.6, o.size * pop,
+      { seed: i % 12, now, line: 0.35, rotate: nope * Math.sin(now / 35) * 0.35 });
   });
   layout.scenes.forEach((_, i) => burst(ctx, artist, hunt, i, now));
 
@@ -269,7 +410,8 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
   }
   const next = scenes[hunt.step];
   scenes.forEach((s, i) => {
-    const pop = popOf(hunt, i, layout.scenes[i], now);
+    // The compass shows from the start; the others once found, popping out of their hidden character.
+    const pop = i === 0 ? popOf(hunt, 0, layout.scenes[0], now) : hunt.reached[s.id] ? Math.min(1, (now - hunt.reached[s.id]) / POP_MS) : 0;
     if (!pop) return;
     const reachedAt = hunt.reached[s.id], moment = reachedAt ? Math.max(0, 1 - (now - reachedAt) / MOMENT_MS) : 0;
     const isNext = s === next, touching = hunt.hover === s.id, fill = isNext && touching ? Math.min(1, (now - hunt.hoverSince) / DWELL) : 0;
@@ -290,7 +432,10 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
     const pop = easePop(popOf(hunt, 0, compass, now - 250 * (k + 1))) * (1 - thrown / 1.2);
     if (pop > 0) artist.draw(art, compass.x + Math.cos(a) * d, compass.y + Math.sin(a) * d * 0.8 + Math.sin(now / 700 + k) * 1, size * pop, { seed: 70 + k, now, line: 0.3 });
   });
-  if (aim) aimLine(ctx, artist, aim, scenes, now);
+  // Who to find: the poster beside the last stop, once the zone it's hidden in starts opening.
+  const h = layout.hidden[hunt.step], o = h && !hunt.finished && opening(hunt, hunt.step);
+  if (o) poster(ctx, artist, layout.clues[hunt.step], h, now, Math.min(1, Math.max(0, now - o.at - CLUE_WAIT) / POP_MS));
+  if (aim) aimLine(ctx, artist, aim, pickables(hunt, moves, now), now);
   if (hunt.step === 0 && compass && popOf(hunt, 0, compass, now) >= 1) {
     ctx.font = "700 2px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = INK;
     const x = Math.min(W - 16, Math.max(16, compass.x)), y = compass.y - compass.size * 0.62 - 5;

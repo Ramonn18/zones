@@ -3,6 +3,7 @@
 //   vendor/art/oreo:     Oreo Doodle Icons (MIT): hand-drawn doodles (skull, map, stars...)
 //   vendor/art/tabler:   Tabler Icons (MIT): the ship, compass, treasure chest, anchor...
 //   vendor/art/openmoji: OpenMoji, line versions (CC BY-SA 4.0): the octopus (the Kraken)
+//   vendor/art/gameicons: game-icons.net (CC BY 3.0): the pirate hat (a silhouette, drawn as its outline)
 import rough from "../vendor/rough/rough.esm.js";
 
 const BOIL = 8;       // new wobble this many times a second
@@ -19,6 +20,8 @@ export const ART = {
   clouds: ["oreo", "clouds"], moon: ["oreo", "moon-stars"], shootingStar: ["oreo", "shooting-star"], fish: ["oreo", "fish"],
   arrow: ["oreo", "arrow-right"], arrowUp: ["oreo", "arrow-up-right"], confetti: ["oreo", "confetti"], key: ["oreo", "key"], gem: ["oreo", "diamond"],
   pin: ["oreo", "map-pin"], scroll: ["oreo", "scroll"], globe: ["oreo", "globe"],
+  // Accessories, worn by the hidden characters (mural.js).
+  pirateHat: ["gameicons", "pirate-hat"], moustache: ["tabler", "moustache"],
 };
 
 // An SVG's drawable parts: its size, and each line as path data (circles, rects and lines as paths too).
@@ -78,5 +81,6 @@ export function createArtist(ctx, art) {
 
   // Sketchy shapes for labels and trails, drawn the same way.
   const ellipse = (x, y, w, h, opts = {}) => rc.ellipse(x, y, w, h, { stroke: "#f4f1ea", strokeWidth: 0.4, roughness: 1, seed: 3, ...opts });
-  return { draw, ellipse };
+  const rect = (x, y, w, h, opts = {}) => rc.rectangle(x, y, w, h, { stroke: "#f4f1ea", strokeWidth: 0.4, roughness: 1, seed: 3, ...opts });
+  return { draw, ellipse, rect };
 }

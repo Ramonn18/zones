@@ -105,7 +105,7 @@
     </section>
     <section>
       <h2>3. The pirate hunt</h2>
-      <p class="hint">A chalk-line pirate mural across both walls. Touch the compass, then follow the dotted trail: ship, island, the Kraken, the treasure. Until hands are tracked, the mouse is the hand: hold it on a scene in the preview.</p>
+      <p class="hint">A chalk-line pirate mural across both walls, played like Where's Waldo. Point at the compass: a zone bursts open and a poster says who to find (say, the mermaid in a pirate hat), hidden among look-alikes. The right one turns into the next stop (ship, island, the Kraken, the treasure), draws the trail from the last stop and opens the next zone. The mouse also works as the hand: hold it on a drawing in the preview.</p>
       <div class="row"><button id="huntBack" title="[">◀ Back</button><button id="huntPause" title="P">Pause</button><button id="huntSkip" title="]">Skip ▶</button><button id="restartHunt" title="R">Start the hunt over</button></div>
       <div class="status" id="huntStatus"></div>
     </section>
@@ -144,7 +144,7 @@
 // what to show. window.corner is for poking at things from the console.
 import { createCornerProjection } from "./src/cornerProjection.js";
 import { PINS, defaultCorner, projToCorner } from "./src/corner.js";
-import { SCENES, muralObjects, placedScenes, layoutFits, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
+import { SCENES, muralObjects, pickables, clueOf, layoutFits, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
 import { calibrationDots, brightness, findArea, findDot, fitCamera, implausible, cornerToCamera, createPresence, makeWay, isPointing, aimOf } from "./src/people.js";
 import { ROOM1 } from "./src/room1.js";
 import { loadCornerState, saveCornerState, setupOf, applySetup, savedSetups, storeSetups } from "./src/cornerState.js";
@@ -590,7 +590,7 @@ function people(dt) {
   // A hand pointing with its index finger: where it aims, and the scene it points at.
   const hands = seenHands && performance.now() - seenHands.at < 400 ? seenHands.hands : [];
   const pointing = fresh && state.mode === "play" && !state.calib && hands.find(isPointing);
-  aim = pointing ? aimOf(pointing, state.cameraFit, state.corner, placedScenes(state.hunt, moves, Date.now())) : null;
+  aim = pointing ? aimOf(pointing, state.cameraFit, state.corner, pickables(state.hunt, moves, Date.now())) : null;
   state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves, aim };
   handsStatus = !hands.length ? "No hands seen" : `${hands.length} hand${hands.length > 1 ? "s" : ""} seen` +
     (pointing ? (aim?.scene ? ` · pointing at the ${aim.scene}` : " · pointing") : " · not pointing");
@@ -634,7 +634,7 @@ function frame() {
     bc.postMessage({ type: "hunt", hunt: state.hunt, crowd: state.crowd });
     const next = SCENES[state.hunt.step];
     $("huntStatus").textContent = (huntPaused ? "Paused (touches are ignored) · " : "") +
-      (state.hunt.finished ? "Treasure found! Starting over soon." : `Next: ${next.name.toLowerCase()} (${next.id}) · step ${state.hunt.step + 1} of ${SCENES.length}`);
+      (state.hunt.finished ? "Treasure found! Starting over soon." : (clueOf(state.hunt) ? `Find ${clueOf(state.hunt)} (hides the ${next.id})` : `Next: ${next.name.toLowerCase()} (${next.id})`) + ` · step ${state.hunt.step + 1} of ${SCENES.length}`);
   }
   projection.draw(state);
   if (sim) {
