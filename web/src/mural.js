@@ -1,14 +1,14 @@
 // The corner's pirate world, like a chalk-line mural: white line drawings on black (black is no
 // light, so only the drawings shine on the wall). The illustrations come from art.js. Five scenes
-// are the stops of a treasure hunt, joined by dotted trails: touch the compass to start, then
-// follow the trail from scene to scene to the chest. Everything is in corner space (cm).
+// are the stops of a treasure hunt: touch the compass to start, then find each stop in turn, to
+// the chest. Finding a stop draws a dotted trail from the stop before it, the way you came. Everything is in corner space (cm).
 //
 // The map is uncovered as the hunt goes. Every hunt lays the mural out afresh: the compass lands
 // somewhere random on either wall, the other stops are spread out from it, and the walls are cut
 // into one zone per stop (each spot belongs to the stop nearest it). At first only the compass's
 // zone shows, and only a small circle of it around the compass, with a few drawings floating
-// around it (the rest of the compass's zone opens with the next one). Each stop found sets off a burst
-// that blows the next zone open, drawing by drawing as its front passes, so the map grows zone by
+// around it (the rest of the compass's zone opens with the next one). Each stop found draws its
+// trail, then sets off a burst that blows the next zone open, drawing by drawing as its front passes, so the map grows zone by
 // zone and there's more and more to search through.
 import { defaultCorner } from "./corner.js";
 
@@ -117,7 +117,8 @@ function opening(hunt, i) {
   const scenes = hunt.layout.scenes;
   if (i === 0) return { at: hunt.started, from: scenes[0] };
   const at = hunt.reached[scenes[i - 1].id];
-  return at ? { at, from: scenes[i - 1] } : null;
+  // After the compass, a find first draws its trail back to where you came from, then bursts.
+  return at ? { at: at + (i > 1 ? TRAIL_MS : 0), from: scenes[i - 1] } : null;
 }
 // How far a drawing at p in zone i has popped in, 0..1 (0: not yet uncovered).
 function popOf(hunt, i, p, now) {
@@ -261,10 +262,10 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
   });
   layout.scenes.forEach((_, i) => burst(ctx, artist, hunt, i, now));
 
-  // Trails: each starts once the stop it leads to has been uncovered.
+  // Trails: drawn once a stop is found, from the stop before it to it (the way you came).
   for (let i = 1; i < scenes.length; i++) {
-    const since = hunt.reached[scenes[i - 1].id];
-    if (since) trail(ctx, scenes[i - 1], scenes[i], Math.min(1, Math.max(0, now - since - dist(scenes[i - 1], scenes[i]) / BURST * 1000) / TRAIL_MS));
+    const since = hunt.reached[scenes[i].id];
+    if (since) trail(ctx, scenes[i - 1], scenes[i], Math.min(1, (now - since) / TRAIL_MS));
   }
   const next = scenes[hunt.step];
   scenes.forEach((s, i) => {
