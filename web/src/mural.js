@@ -125,13 +125,18 @@ export function makeLayout(c, seed = Math.floor(Math.random() * 2 ** 31)) {
   const zoneAt = p => { const i = nearest(p); return i === 0 && dist(p, scenes[0]) > START_R ? 1 : i; };
   const pick = list => list[Math.floor(rand() * list.length)];
 
-  // Who hides each stop after the compass: a different character each time, with an accessory it can wear.
+  // Who hides each stop after the compass: a different character each time, with an accessory it
+  // can wear, not the same accessory as the stop before (when the character can wear another).
   const bases = Object.keys(CHARACTERS).sort(() => rand() - 0.5);
-  const hidden = scenes.map((_, i) => {
-    if (i === 0) return null;
-    const base = bases[(i - 1) % bases.length], acc = pick(Object.keys(ACCESSORIES).filter(a => CHARACTERS[base][ACCESSORIES[a].spot]));
-    return { base, acc };
-  });
+  const hidden = scenes.map((_, i) => null);
+  for (let i = 1; i < scenes.length; i++) {
+    const base = bases[(i - 1) % bases.length], wearable = Object.keys(ACCESSORIES).filter(a => CHARACTERS[base][ACCESSORIES[a].spot]);
+    const fresh = wearable.filter(a => a !== hidden[i - 1]?.acc);
+    hidden[i] = { base, acc: pick(fresh.length ? fresh : wearable) };
+  }
+  // Each answer is one of a kind: nothing else on the walls, ever in the hunt, is that character
+  // wearing that accessory. Look-alikes share one of the two, never both.
+  const answers = new Set(hidden.filter(Boolean).map(h => `${h.base}|${h.acc}`));
 
   // Each hidden character's poster, beside the stop before it (where the players are looking):
   // to its right, left, below its label or above it, wherever it fits on one wall, clear of the stops.
@@ -176,8 +181,8 @@ export function makeLayout(c, seed = Math.floor(Math.random() * 2 ** 31)) {
     const plain = { art: h.base, size: CHARACTERS[h.base].size, role: "decoy", stop: i };
     for (let k = 0; k < DECOYS.same; k++) place(plain, inZone(i));
     for (let k = 0; k < DECOYS.elsewhere; k++) place(plain, () => { const p = anywhere(); return zoneAt(p) <= i ? p : null; });
-    const others = Object.keys(CHARACTERS).filter(b => b !== h.base && CHARACTERS[b][ACCESSORIES[h.acc].spot]);
-    for (let k = 0; k < DECOYS.sameAccessory; k++) { const b = pick(others); place({ art: b, acc: h.acc, size: CHARACTERS[b].size, role: "decoy", stop: i }, inZone(i)); }
+    const others = Object.keys(CHARACTERS).filter(b => b !== h.base && CHARACTERS[b][ACCESSORIES[h.acc].spot] && !answers.has(`${b}|${h.acc}`));
+    for (let k = 0; k < DECOYS.sameAccessory && others.length; k++) { const b = pick(others); place({ art: b, acc: h.acc, size: CHARACTERS[b].size, role: "decoy", stop: i }, inZone(i)); }
   });
   // Then the scenery, filling the rest.
   for (let k = 0; k < 4000 && scenery.length < 400; k++) {
