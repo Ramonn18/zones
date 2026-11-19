@@ -25,7 +25,8 @@ const POP_MS = 450;       // how long a drawing takes to pop in once the front r
 const SPACING = 15;       // cm between the scenery's drawings
 const START_R = 30;       // cm: at first, only this close around the compass shows
 const PICK_R = 6;         // cm: how close counts as touching a hidden character, at least
-const NOPE_MS = 700;      // how long a look-alike shakes when it's picked
+const NOPE_MS = 700;
+const LET_GO_MS = 300;    // ms without any pointer before what's held is let go      // how long a look-alike shakes when it's picked
 const CLUE = { w: 34, h: 21 }; // the "find" poster's size (cm)
 const CLUE_WAIT = 900;    // ms after its zone starts opening that the poster shows
 const DECOYS = { same: 4, elsewhere: 2, sameAccessory: 2 }; // look-alikes per hidden character
@@ -259,9 +260,15 @@ export function clueOf(hunt) {
 // holding on a look-alike makes it shake (hunt.nope).
 export function updateHunt(hunt, pointer, now, moves) {
   if (hunt.finished && now - hunt.finished > FINALE_MS) Object.assign(hunt, newHunt(hunt.layout.corner, now));
-  const over = pointer && pickables(hunt, moves, now)
-    .filter(s => Math.hypot(pointer.x - s.x, pointer.y - s.y) < s.r)
-    .sort((a, b) => Math.hypot(pointer.x - a.x, pointer.y - a.y) - Math.hypot(pointer.x - b.x, pointer.y - b.y))[0];
+  const picks = pickables(hunt, moves, now), held = hunt.hover && picks.find(p => p.id === hunt.hover);
+  let over = pointer && picks
+    .filter(s => dist(pointer, s) < s.r)
+    .sort((a, b) => dist(pointer, a) - dist(pointer, b))[0];
+  // Sticky: a hand's small wobbles don't let go of what it's holding. It stays held while the
+  // pointer is within half again its reach, and through a moment without any pointer at all.
+  if (held && pointer && dist(pointer, held) < held.r * 1.5 && (!over || dist(pointer, over) > dist(pointer, held) * 0.6)) over = held;
+  if (held && !pointer && now - (hunt.pointerSeen || 0) < LET_GO_MS) over = held;
+  if (pointer) hunt.pointerSeen = now;
   if ((over?.id || null) !== hunt.hover) { hunt.hover = over?.id || null; hunt.hoverSince = now; }
   const target = SCENES[hunt.step];
   if (hunt.hover && now - hunt.hoverSince > DWELL) {
@@ -312,16 +319,30 @@ function trail(ctx, a, b, progress) {
   for (let i = 0; i <= n; i++) { const s = from + (to - from) * i / n; if (s > end) break; const p = at(s); ctx.beginPath(); ctx.arc(p.x, p.y, 0.5, 0, Math.PI * 2); ctx.fill(); }
 }
 
-// Where a pointing finger aims: a dotted chalk line along it, and a ring on the scene it reaches.
-function aimLine(ctx, artist, aim, scenes, now) {
-  const n = Math.max(1, Math.round(Math.hypot(aim.to.x - aim.from.x, aim.to.y - aim.from.y) / 2.4)), crawl = (now / 400) % 1;
-  ctx.fillStyle = INK;
-  for (let i = 0; i < n; i++) {
-    const s = (i + crawl) / n;
-    ctx.beginPath(); ctx.arc(aim.from.x + (aim.to.x - aim.from.x) * s, aim.from.y + (aim.to.y - aim.from.y) * s, 0.45, 0, Math.PI * 2); ctx.fill();
+// What the hand is doing: along-the-finger mode draws a dotted chalk line along the finger; shadow
+// mode, a small chalk cursor where the fingertip's shadow is. Whatever's held gets a ring that
+// fills up while it's held, so players see their pick coming.
+function pointerMarks(ctx, artist, hunt, aim, picks, now) {
+  ctx.fillStyle = INK; ctx.strokeStyle = INK;
+  if (aim?.from && aim?.to) {
+    const n = Math.max(1, Math.round(Math.hypot(aim.to.x - aim.from.x, aim.to.y - aim.from.y) / 2.4)), crawl = (now / 400) % 1;
+    for (let i = 0; i < n; i++) {
+      const s = (i + crawl) / n;
+      ctx.beginPath(); ctx.arc(aim.from.x + (aim.to.x - aim.from.x) * s, aim.from.y + (aim.to.y - aim.from.y) * s, 0.45, 0, Math.PI * 2); ctx.fill();
+    }
   }
-  const hit = aim.scene && scenes.find(s => s.id === aim.scene);
-  if (hit) artist.ellipse(hit.x, hit.y, hit.size * 1.5, hit.size * 1.5, { seed: Math.floor(now / 125) % 6 + 20, roughness: 1.2, strokeWidth: 0.5 });
+  if (aim?.cursor) {
+    const { x, y } = aim.cursor;
+    artist.ellipse(x, y, 3.2, 3.2, { seed: Math.floor(now / 125) % 6 + 30, roughness: 0.8, strokeWidth: 0.35 });
+    ctx.lineWidth = 0.3;
+    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + now / 900; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * 2.3, y + Math.sin(a) * 2.3); ctx.lineTo(x + Math.cos(a) * 3.4, y + Math.sin(a) * 3.4); ctx.stroke(); }
+  }
+  const held = hunt.hover && picks.find(p => p.id === hunt.hover);
+  if (held) {
+    const R = Math.max(held.r, held.size * 0.75) + 1, fill = Math.max(0, Math.min(1, (now - hunt.hoverSince) / DWELL));
+    artist.ellipse(held.x, held.y, R * 2, R * 2, { seed: Math.floor(now / 125) % 6 + 20, roughness: 1, strokeWidth: 0.3 });
+    if (fill > 0) { ctx.lineWidth = 0.9; ctx.beginPath(); ctx.arc(held.x, held.y, R + 1, -Math.PI / 2, -Math.PI / 2 + fill * Math.PI * 2); ctx.stroke(); }
+  }
 }
 
 // A character, and the accessory it wears if any. opts as for artist.draw.
@@ -435,7 +456,7 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
   const h = layout.hidden[hunt.step], o = h && !hunt.finished && opening(hunt, hunt.step);
   if (o) poster(ctx, artist, layout.clues[hunt.step], h, now, Math.min(1, Math.max(0, now - o.at - CLUE_WAIT) / POP_MS));
   layout.scenes.forEach((_, i) => burst(ctx, artist, hunt, i, now, W, c.height)); // over everything, posters too
-  if (aim) aimLine(ctx, artist, aim, pickables(hunt, moves, now), now);
+  pointerMarks(ctx, artist, hunt, aim, pickables(hunt, moves, now), now);
   if (hunt.step === 0 && compass && popOf(hunt, 0, compass, now) >= 1) {
     ctx.font = "700 2px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = INK;
     const x = Math.min(W - 16, Math.max(16, compass.x)), y = compass.y - compass.size * 0.62 - 5;

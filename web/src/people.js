@@ -300,24 +300,79 @@ export function cameraToCorner(fit, c, q) {
   return null;
 }
 
-// Where a pointing hand aims: along its index finger (knuckle to tip, carried on past the tip),
-// the first scene the line meets on the walls. Seen from the camera, that line runs through the
-// spot the finger points at (how far along it, one camera can't tell; the scenes decide).
-// Returns { from, to, scene }: the line on the walls (corner cm), ending at the scene it meets
+// Where a pointing hand aims: along its index finger (knuckle to tip, carried on past the tip).
+// Seen from the camera, that line runs through the spot the finger points at; how far along it,
+// one camera can't tell, so it takes the pickable thing the line passes closest to (relative to
+// its size). Returns { from, to, scene }: the line on the walls (corner cm), ending at that thing
 // (scene: its id) or where it leaves the walls (scene: null); null if it never meets a wall.
-export function aimOf(hand, fit, c, scenes) {
-  const mcp = pt(hand, "indexMCP"), tip = pt(hand, "indexTip"), len = dist(mcp, tip);
-  const dx = (tip.x - mcp.x) / len, dy = (tip.y - mcp.y) / len;
-  let from = null, to = null;
+// tip, dir: the fingertip and the finger's direction in the camera's picture (dir a unit vector).
+export function aimOf(tip, dir, fit, c, scenes) {
+  let from = null, to = null, best = null, bestScore = 1;
   for (let s = 0; s < 1.5; s += 0.005) {
-    const q = { x: tip.x + dx * s, y: tip.y + dy * s };
+    const q = { x: tip.x + dir.x * s, y: tip.y + dir.y * s };
     if (q.x < 0 || q.x > 1 || q.y < 0 || q.y > 1) break;
     const p = cameraToCorner(fit, c, q);
     if (!p) { if (from) break; continue; }
     from ||= p;
     to = p;
-    const hit = scenes.find(sc => dist(sc, p) < sc.r);
-    if (hit) return { from, to: { x: hit.x, y: hit.y }, scene: hit.id };
+    for (const sc of scenes) { const score = dist(sc, p) / sc.r; if (score < bestScore) { bestScore = score; best = sc; } }
   }
+  if (best) return { from, to: { x: best.x, y: best.y }, scene: best.id };
   return from && { from, to, scene: null };
+}
+
+// ---- Steady pointing ----------------------------------------------------------------------------
+// A One Euro filter (Casiez et al., 2012): smooths a jittery value a lot while it's still and
+// little while it moves fast, so the cursor is calm yet doesn't lag behind a quick move.
+function oneEuro(minCutoff, beta, dCutoff = 1) {
+  let x = null, dx = 0, last = 0;
+  const alpha = (cutoff, dt) => 1 / (1 + 1 / (2 * Math.PI * cutoff * dt));
+  return (value, t) => {
+    if (x === null) { x = value; last = t; return x; }
+    const dt = Math.max(1e-3, t - last); last = t;
+    const d = (value - x) / dt;
+    dx += alpha(dCutoff, dt) * (d - dx);
+    x += alpha(minCutoff + beta * Math.abs(dx), dt) * (value - x);
+    return x;
+  };
+}
+
+const HOLD_S = 0.35;  // a pointing hand lost for less than this is still pointing (Vision misses frames)
+const PAST_TIP = 0.35; // the shadow cursor sits this many finger lengths past the tip, so it's not under the finger
+
+// Follows one pointing hand from frame to frame and turns it into a steady place on the walls.
+// mode "shadow": the cursor is the fingertip's shadow. The camera sits on the projector, so the
+// spot on the wall right behind the fingertip, as the camera sees it, is where its shadow falls:
+// put the shadow on a drawing to pick it. mode "aim": along the finger, as aimOf.
+// update({ hands, fit, c, t (seconds), mode, picks }) returns { mode, cursor, from, to, scene } or null.
+export function createPointer() {
+  let fx, fy, fdx, fdy, lastTip = null, lastSeen = -Infinity, last = null;
+  const reset = () => { fx = oneEuro(1.0, 0.03); fy = oneEuro(1.0, 0.03); fdx = oneEuro(1.5, 0.3); fdy = oneEuro(1.5, 0.3); lastTip = null; last = null; };
+  reset();
+  return function update({ hands, fit, c, t, mode = "shadow", picks = [] }) {
+    if (!fit) { reset(); return null; }
+    // The pointing hand; while it flickers out of the pointing pose, the hand nearest where it was.
+    let hand = hands.filter(isPointing).sort((a, b) => (lastTip ? dist(pt(a, "indexTip"), lastTip) - dist(pt(b, "indexTip"), lastTip) : 0))[0];
+    if (!hand && lastTip && t - lastSeen < HOLD_S) hand = hands.filter(h => pt(h, "indexTip") && pt(h, "indexMCP") && dist(pt(h, "indexTip"), lastTip) < 0.08)[0];
+    if (!hand) {
+      if (t - lastSeen < HOLD_S) return last; // a missed frame or two: stay put
+      reset(); return null;
+    }
+    const tip = pt(hand, "indexTip"), mcp = pt(hand, "indexMCP"), len = dist(mcp, tip) || 1e-3;
+    lastTip = tip; lastSeen = t;
+    // Smooth the finger in the camera's picture: its tip, and its direction.
+    let dx = fdx((tip.x - mcp.x) / len, t), dy = fdy((tip.y - mcp.y) / len, t);
+    const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
+    const sTip = { x: fx(tip.x, t), y: fy(tip.y, t) };
+    if (mode === "aim") {
+      const a = aimOf(sTip, { x: dx, y: dy }, fit, c, picks);
+      last = a && { mode, cursor: null, ...a };
+      return last;
+    }
+    const cursor = cameraToCorner(fit, c, { x: sTip.x + dx * len * PAST_TIP, y: sTip.y + dy * len * PAST_TIP });
+    if (!cursor) { last = null; return null; }
+    const over = picks.filter(p => dist(p, cursor) < p.r).sort((a, b) => dist(a, cursor) - dist(b, cursor))[0];
+    last = { mode, cursor, from: null, to: null, scene: over?.id || null };
+    return last;
+  };
 }

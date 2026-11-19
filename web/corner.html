@@ -90,6 +90,7 @@
       <p class="hint">The camera finds people in front of the corner (Apple Vision, in Zones.app). The mural keeps its light off them, and its drawings move out of their way and gather around them. First, show the camera where the walls are: with everyone out of the picture, calibrate (the projector flashes 18 dots, about 20 seconds).</p>
       <div class="row"><button id="calibrate">Calibrate the camera to the walls</button></div>
       <div class="row" style="margin-top:6px"><button id="makeWay">Make way for people</button><button id="showPeople" class="on">Show what it sees</button><button id="walkBtn" hidden>A person walks in</button></div>
+      <div class="row" style="margin-top:6px"><button id="pointMode" title="How a pointing finger picks a drawing">Pointing: finger's shadow</button></div>
       <div class="status" id="calibStatus"></div>
       <div class="status" id="peopleStatus"></div>
       <div class="status" id="handsStatus"></div>
@@ -145,7 +146,7 @@
 import { createCornerProjection } from "./src/cornerProjection.js";
 import { PINS, defaultCorner, projToCorner } from "./src/corner.js";
 import { SCENES, muralObjects, pickables, clueOf, layoutFits, newHunt, updateHunt, reachNext, stepBack } from "./src/mural.js";
-import { calibrationDots, brightness, findArea, findDot, fitCamera, implausible, cornerToCamera, createPresence, makeWay, isPointing, aimOf } from "./src/people.js";
+import { calibrationDots, brightness, findArea, findDot, fitCamera, implausible, cornerToCamera, createPresence, makeWay, isPointing, createPointer } from "./src/people.js";
 import { ROOM1 } from "./src/room1.js";
 import { loadCornerState, saveCornerState, setupOf, applySetup, savedSetups, storeSetups } from "./src/cornerState.js";
 
@@ -578,7 +579,7 @@ $("walkBtn").addEventListener("click", () => {
   if (!walkSince) sim?.setPerson(null);
 });
 
-const presence = createPresence();
+const presence = createPresence(), steadyPointer = createPointer();
 let moves = {}, lastTick = performance.now(), aim = null, handsStatus = "", autoCalibrated = false;
 // Each frame: where people are on the corner, and where the drawings go to make way.
 function people(dt) {
@@ -589,11 +590,11 @@ function people(dt) {
   moves = makeWay(muralObjects(state.hunt), field, state.corner, moves, dt);
   // A hand pointing with its index finger: where it aims, and the scene it points at.
   const hands = seenHands && performance.now() - seenHands.at < 400 ? seenHands.hands : [];
-  const pointing = fresh && state.mode === "play" && !state.calib && hands.find(isPointing);
-  aim = pointing ? aimOf(pointing, state.cameraFit, state.corner, pickables(state.hunt, moves, Date.now())) : null;
+  const playing = fresh && state.mode === "play" && !state.calib, pointing = playing && hands.find(isPointing);
+  aim = playing ? steadyPointer({ hands, fit: state.cameraFit, c: state.corner, t: performance.now() / 1000, mode: state.output.pointing, picks: pickables(state.hunt, moves, Date.now()) }) : null;
   state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves, aim };
   handsStatus = !hands.length ? "No hands seen" : `${hands.length} hand${hands.length > 1 ? "s" : ""} seen` +
-    (pointing ? (aim?.scene ? ` · pointing at the ${aim.scene}` : " · pointing") : " · not pointing");
+    (pointing || aim ? (aim?.scene ? ` · pointing at ${aim.scene.startsWith("decoy:") ? "a look-alike" : `the ${aim.scene}`}` : " · pointing") : " · not pointing");
   if (IN_APP && !sim && !state.cameraFit && picture && !calibrating && !autoCalibrated) { // first time: fit the camera by itself
     autoCalibrated = true;
     calibStatus("No camera fit yet: calibrating by itself in 3 seconds…");
@@ -618,7 +619,7 @@ if (IN_APP && window.webkit?.messageHandlers?.status) setInterval(() => {
     time: new Date().toISOString(), mode: state.mode, blackout: state.blackout,
     projector: $("projStatus").textContent, camera: $("camStatus").textContent,
     calibration: $("calibStatus").textContent, people: $("peopleStatus").textContent, hands: handsStatus,
-    aim: aim && { scene: aim.scene, from: aim.from, to: aim.to },
+    aim: aim && { mode: aim.mode, scene: aim.scene, cursor: aim.cursor, from: aim.from, to: aim.to },
     hunt: $("huntStatus").textContent, lastCalibration, cameraFitError: state.cameraFit?.error ?? null,
     framesFromCamera: !!picture, maskAge: peopleMask ? Math.round(performance.now() - peopleMask.at) : null,
   });
@@ -630,7 +631,7 @@ function frame() {
   const mask = people(dt);
   if (state.mode === "play") {
     if (!layoutFits(state.hunt.layout, state.corner)) { state.hunt = newHunt(state.corner); moves = {}; } // the walls changed size
-    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer || aim?.to, Date.now(), moves);
+    if (!huntPaused) updateHunt(state.hunt, simTouch || pointer || aim?.cursor || (aim?.scene ? aim.to : null), Date.now(), moves);
     bc.postMessage({ type: "hunt", hunt: state.hunt, crowd: state.crowd });
     const next = SCENES[state.hunt.step];
     $("huntStatus").textContent = (huntPaused ? "Paused (touches are ignored) · " : "") +
@@ -656,6 +657,10 @@ showOutput();
 showUndo();
 showFit();
 showMakeWay();
+// Pointing: the fingertip's shadow is the cursor (steady, exact), or a line along the finger.
+const showPointMode = () => { $("pointMode").textContent = state.output.pointing === "aim" ? "Pointing: along the finger" : "Pointing: finger's shadow"; };
+$("pointMode").addEventListener("click", () => { state.output.pointing = state.output.pointing === "aim" ? "shadow" : "aim"; showPointMode(); publish(); });
+showPointMode();
 listSetups();
 publish();
 window.corner = { state, get pointer() { return pointer; }, set pointer(p) { pointer = p; }, get sim() { return sim; }, set hands(h) { seenHands = { hands: h, at: performance.now() }; }, get aim() { return aim; } };

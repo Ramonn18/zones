@@ -5,8 +5,9 @@ import { defaultCorner } from "./corner.js";
 const KEY = "zones-corner", SETUPS = "zones-corner-setups";
 
 // output: brightness 0..1; soft: how far the picture's outer edges fade out (cm); pattern: what
-// "Full picture" shows (grid, white, bars); makeWay: keep the mural off people, moving it around them.
-export const defaultOutput = () => ({ brightness: 1, soft: 0, pattern: "grid", makeWay: true });
+// "Full picture" shows (grid, white, bars); makeWay: keep the mural off people, moving it around them;
+// pointing: "shadow" (the fingertip's shadow is the cursor) or "aim" (along the finger).
+export const defaultOutput = () => ({ brightness: 1, soft: 0, pattern: "grid", makeWay: true, pointing: "shadow" });
 const MODES = ["frame", "fit", "play", "off"];
 
 export function loadCornerState() {
