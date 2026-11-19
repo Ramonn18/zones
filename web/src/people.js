@@ -227,7 +227,9 @@ function chamfer(inside, cols, rows, target) {
 // objects: [{ key, x, y, r }] (home and size, cm). moves: { key: [dx, dy] }, carried from one
 // frame to the next and returned. field: the latest presence, or null when no one is tracked
 // (then everything drifts home).
-export function makeWay(objects, field, c, moves, dt) {
+// hold: { x, y, r } or null: drawings within r of it stay where they are (what a hand is pointing at
+// doesn't run away from it).
+export function makeWay(objects, field, c, moves, dt, hold = null) {
   const W = c.left.width + c.right.width, H = c.height;
   const sdfAt = (x, y) => {
     const gx = Math.min(field.cols - 1.001, Math.max(0, x / field.cell - 0.5)), gy = Math.min(field.rows - 1.001, Math.max(0, y / field.cell - 0.5));
@@ -263,7 +265,9 @@ export function makeWay(objects, field, c, moves, dt) {
   }
   const k = 1 - Math.exp(-dt / GLIDE_S), next = {};
   objects.forEach((o, i) => {
-    const [mx, my] = moves[o.key] || [0, 0], tx = targets[i].x - o.x, ty = targets[i].y - o.y;
+    const [mx, my] = moves[o.key] || [0, 0];
+    if (hold && Math.hypot(o.x + mx - hold.x, o.y + my - hold.y) < hold.r) { if (mx || my) next[o.key] = [mx, my]; return; }
+    const tx = targets[i].x - o.x, ty = targets[i].y - o.y;
     const nx = mx + (tx - mx) * k, ny = my + (ty - my) * k;
     if (Math.abs(nx) > 0.05 || Math.abs(ny) > 0.05 || tx || ty) next[o.key] = [nx, ny];
   });
@@ -338,12 +342,13 @@ function oneEuro(minCutoff, beta, dCutoff = 1) {
 }
 
 const HOLD_S = 0.35;  // a pointing hand lost for less than this is still pointing (Vision misses frames)
-const PAST_TIP = 0.35; // the shadow cursor sits this many finger lengths past the tip, so it's not under the finger
+const REACH_CM = 12;   // the shadow cursor sits this far (on the wall) out ahead of the fingertip, along the finger,
+                      // so it's clear of the hand and arm (which make the drawings move away)
 
 // Follows one pointing hand from frame to frame and turns it into a steady place on the walls.
 // mode "shadow": the cursor is the fingertip's shadow. The camera sits on the projector, so the
-// spot on the wall right behind the fingertip, as the camera sees it, is where its shadow falls:
-// put the shadow on a drawing to pick it. mode "aim": along the finger, as aimOf.
+// spot on the wall right behind the fingertip, as the camera sees it, is where its shadow falls;
+// the cursor is a little way out ahead of that, along the finger: put it on a drawing to pick it. mode "aim": along the finger, as aimOf.
 // update({ hands, fit, c, t (seconds), mode, picks }) returns { mode, cursor, from, to, scene } or null.
 export function createPointer() {
   let fx, fy, fdx, fdy, lastTip = null, lastSeen = -Infinity, last = null;
@@ -369,8 +374,10 @@ export function createPointer() {
       last = a && { mode, cursor: null, ...a };
       return last;
     }
-    const cursor = cameraToCorner(fit, c, { x: sTip.x + dx * len * PAST_TIP, y: sTip.y + dy * len * PAST_TIP });
-    if (!cursor) { last = null; return null; }
+    const shadow = cameraToCorner(fit, c, sTip), ahead = cameraToCorner(fit, c, { x: sTip.x + dx * len, y: sTip.y + dy * len });
+    if (!shadow || !ahead) { last = null; return null; }
+    const wl = dist(shadow, ahead) || 1, W = c.left.width + c.right.width;
+    const cursor = { x: Math.min(W, Math.max(0, shadow.x + (ahead.x - shadow.x) / wl * REACH_CM)), y: Math.min(c.height, Math.max(0, shadow.y + (ahead.y - shadow.y) / wl * REACH_CM)) };
     const over = picks.filter(p => dist(p, cursor) < p.r).sort((a, b) => dist(a, cursor) - dist(b, cursor))[0];
     last = { mode, cursor, from: null, to: null, scene: over?.id || null };
     return last;

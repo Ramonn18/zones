@@ -587,12 +587,12 @@ function people(dt) {
   const mask = sim ? sim.personMask() : peopleMask && performance.now() - peopleMask.at < 1000 ? peopleMask : null;
   const fresh = state.cameraFit && !state.cameraFit.failed;
   const field = mask && fresh && state.output.makeWay && state.mode === "play" && !state.calib ? presence.update(mask, state.cameraFit, state.corner, dt) : null;
-  moves = makeWay(muralObjects(state.hunt), field, state.corner, moves, dt);
+  moves = makeWay(muralObjects(state.hunt), field, state.corner, moves, dt, aim?.cursor ? { ...aim.cursor, r: 20 } : null); // (aim: last frame's)
   // A hand pointing with its index finger: where it aims, and the scene it points at.
   const hands = seenHands && performance.now() - seenHands.at < 400 ? seenHands.hands : [];
   const playing = fresh && state.mode === "play" && !state.calib, pointing = playing && hands.find(isPointing);
   aim = playing ? steadyPointer({ hands, fit: state.cameraFit, c: state.corner, t: performance.now() / 1000, mode: state.output.pointing, picks: pickables(state.hunt, moves, Date.now()) }) : null;
-  state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves, aim };
+  state.crowd = { cols: field?.cols, rows: field?.rows, cell: field?.cell, shield: field?.shield, moves, aim, clearAround: aim?.cursor ? { ...aim.cursor, r: 16 } : null };
   handsStatus = !hands.length ? "No hands seen" : `${hands.length} hand${hands.length > 1 ? "s" : ""} seen` +
     (pointing || aim ? (aim?.scene ? ` · pointing at ${aim.scene.startsWith("decoy:") ? "a look-alike" : `the ${aim.scene}`}` : " · pointing") : " · not pointing");
   if (IN_APP && !sim && !state.cameraFit && picture && !calibrating && !autoCalibrated) { // first time: fit the camera by itself

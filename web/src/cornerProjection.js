@@ -54,7 +54,8 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
   }
 
   // Darkens where people are (crowd.shield, a grid over corner space), with soft edges, so the
-  // projector's light doesn't land on them.
+  // projector's light doesn't land on them. Except around a pointing hand's cursor (crowd.clearAround),
+  // so the cursor and what it's pointing at stay lit.
   const shieldCanvas = document.createElement("canvas");
   function keepOffPeople(g, crowd) {
     const { cols, rows, cell, shield } = crowd;
@@ -63,7 +64,11 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
     for (let i = 0; i < shield.length; i++) img.data[i * 4 + 3] = shield[i];
     sg.putImageData(img, 0, 0);
     g.imageSmoothingEnabled = true;
+    g.save();
+    const hole = crowd.clearAround;
+    if (hole) { g.beginPath(); g.rect(0, 0, g.canvas.width, g.canvas.height); g.moveTo((hole.x + hole.r) * PX, hole.y * PX); g.arc(hole.x * PX, hole.y * PX, hole.r * PX, 0, Math.PI * 2); g.clip("evenodd"); }
     g.drawImage(shieldCanvas, 0, 0, cols * cell * PX, rows * cell * PX);
+    g.restore();
   }
 
   // Black, with one white dot (corner cm) for the camera to find; dot "all": the whole corner white.
