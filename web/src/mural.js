@@ -353,32 +353,27 @@ function poster(ctx, artist, r, h, now, show) {
 }
 
 // A zone's burst: a sketchy ring (and a lagging second one) spreading from where it opened, with
-// sparks flying ahead of it, all kept inside the zone it's uncovering.
-function burst(ctx, artist, hunt, i, now) {
-  const o = opening(hunt, i), { zones, scenes, start } = hunt.layout;
+// sparks flying ahead of it. It ripples across the whole map, dark parts too: bright while it
+// crosses the zone it's opening, then fading out as it carries on to the far edges of the walls.
+function burst(ctx, artist, hunt, i, now, W, H) {
+  const o = opening(hunt, i), { zones, start } = hunt.layout;
   if (!o) return;
-  // The ground it uncovers: its own part of the walls. The first zone is only the circle around
-  // the compass; the second also gets the rest of the compass's part.
-  const cells = i === 1 ? [zones[1], zones[0]] : [zones[i]];
-  const far = i === 0 ? start : Math.max(...cells.flat().map(p => dist(p, o.from))), r = (now - o.at) / 1000 * BURST;
-  if (r <= 0 || r > far + 12) return;
-  const fade = 1 - Math.max(0, r - far * 0.6) / (far * 0.4 + 12);
-  ctx.save();
-  ctx.beginPath();
-  for (const cell of cells) { cell.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath(); }
-  if (i === 1) { ctx.moveTo(scenes[0].x + start, scenes[0].y); ctx.arc(scenes[0].x, scenes[0].y, start, 0, Math.PI * 2); }
-  if (i === 0) { ctx.clip(); ctx.beginPath(); ctx.arc(scenes[0].x, scenes[0].y, start, 0, Math.PI * 2); ctx.clip(); }
-  else ctx.clip(i === 1 ? "evenodd" : "nonzero");
+  const cells = i === 1 ? [zones[1], zones[0]] : [zones[i]]; // the second zone also gets the rest of the compass's part
+  const zoneFar = i === 0 ? start : Math.max(...cells.flat().map(p => dist(p, o.from)));
+  const wallFar = Math.max(zoneFar + 20, ...[[0, 0], [W, 0], [0, H], [W, H]].map(([x, y]) => dist({ x, y }, o.from)));
+  const r = (now - o.at) / 1000 * BURST;
+  if (r <= 0 || r > wallFar) return;
+  const fade = r < zoneFar ? 1 : 1 - (r - zoneFar) / (wallFar - zoneFar); // 1 inside its zone, down to 0 at the far edge
   const seed = Math.floor(now / 125) % 6 + 40 + i;
-  artist.ellipse(o.from.x, o.from.y, r * 2, r * 2, { seed, roughness: 1.6, strokeWidth: 0.25 + 0.9 * fade });
-  if (r > 9) artist.ellipse(o.from.x, o.from.y, (r - 8) * 2, (r - 8) * 2, { seed: seed + 7, roughness: 2, strokeWidth: 0.2 + 0.3 * fade });
+  artist.ellipse(o.from.x, o.from.y, r * 2, r * 2, { seed, roughness: 1.6, strokeWidth: 0.12 + 1 * fade ** 1.5 });
+  if (r > 9) artist.ellipse(o.from.x, o.from.y, (r - 8) * 2, (r - 8) * 2, { seed: seed + 7, roughness: 2, strokeWidth: 0.1 + 0.3 * fade });
+  if (fade < 0.25) return; // the sparks die out first
   ctx.strokeStyle = INK; ctx.lineWidth = 0.35 * fade + 0.1;
-  for (let k = 0; k < 18; k++) { // sparks: short dashes thrown out ahead of the ring
-    const a = k / 18 * Math.PI * 2 + i * 1.3 + Math.sin(k * 7.1) * 0.2, d = r + 2 + (k % 3) * 1.5, len = 2 + (k % 4);
+  for (let k = 0; k < 24; k++) { // sparks: short dashes thrown out ahead of the ring
+    const a = k / 24 * Math.PI * 2 + i * 1.3 + Math.sin(k * 7.1) * 0.2, d = r + 2 + (k % 3) * 1.5, len = (2 + (k % 4)) * fade;
     ctx.beginPath(); ctx.moveTo(o.from.x + Math.cos(a) * d, o.from.y + Math.sin(a) * d);
     ctx.lineTo(o.from.x + Math.cos(a) * (d + len), o.from.y + Math.sin(a) * (d + len)); ctx.stroke();
   }
-  ctx.restore();
 }
 
 // Draws the mural. c: the corner; px: pixels per cm on the content canvas; hunt: its state (with
@@ -406,7 +401,6 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
     drawCharacter(artist, o.art, o.acc, o.x + dx + Math.sin(now / 2100 + i) * drift, o.y + dy + Math.sin(now / 1500 + i * 1.7) * 0.6, o.size * pop,
       { seed: i % 12, now, line: 0.35, rotate: nope * Math.sin(now / 35) * 0.35 });
   });
-  layout.scenes.forEach((_, i) => burst(ctx, artist, hunt, i, now));
 
   // Trails: drawn once a stop is found, from the stop before it to it (the way you came).
   for (let i = 1; i < scenes.length; i++) {
@@ -440,6 +434,7 @@ export function drawMural(ctx, artist, c, px, hunt, now, moves, aim) {
   // Who to find: the poster beside the last stop, once the zone it's hidden in starts opening.
   const h = layout.hidden[hunt.step], o = h && !hunt.finished && opening(hunt, hunt.step);
   if (o) poster(ctx, artist, layout.clues[hunt.step], h, now, Math.min(1, Math.max(0, now - o.at - CLUE_WAIT) / POP_MS));
+  layout.scenes.forEach((_, i) => burst(ctx, artist, hunt, i, now, W, c.height)); // over everything, posters too
   if (aim) aimLine(ctx, artist, aim, pickables(hunt, moves, now), now);
   if (hunt.step === 0 && compass && popOf(hunt, 0, compass, now) >= 1) {
     ctx.font = "700 2px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = INK;
