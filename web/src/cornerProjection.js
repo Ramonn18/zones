@@ -4,7 +4,7 @@
 import { createWarp } from "./warp.js";
 import { drawAlignment, wallQuads } from "./corner.js";
 import { createArtist, loadArt } from "./art.js";
-import { drawMural, newHunt } from "./mural.js";
+import { drawMural } from "./mural.js";
 import { defaultOutput } from "./cornerState.js";
 
 const PX = 6; // content pixels per centimeter
@@ -33,9 +33,9 @@ export function createCornerProjection(canvas, { preview = false } = {}) {
 
   function walls(state, w, h, out, drawContent) {
     const c = state.corner, playing = state.mode === "play" && !state.calib;
-    drawContent ||= playing && artist
-      ? (g, c, px) => drawMural(g, artist, c, px, state.hunt || newHunt(), Date.now(), state.crowd?.moves, state.crowd?.aim)
-      : drawAlignment;
+    drawContent ||= !playing ? drawAlignment
+      : artist && state.hunt?.layout ? (g, c, px) => drawMural(g, artist, c, px, state.hunt, Date.now(), state.crowd?.moves, state.crowd?.aim)
+      : (g, c, px) => { g.fillStyle = "#000"; g.fillRect(0, 0, (c.left.width + c.right.width) * px, c.height * px); }; // until the hunt arrives
     const CW = Math.round((c.left.width + c.right.width) * PX), CH = Math.round(c.height * PX);
     if (content.width !== CW || content.height !== CH) { content.width = CW; content.height = CH; }
     const g = content.getContext("2d");
