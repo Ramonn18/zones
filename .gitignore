@@ -14,3 +14,6 @@ rooms/**/*.HEIC
 # Built app (rebuild with: sh app/build.sh)
 Zones.app/
 .zones-status.json
+
+# Mixamo characters and animations (Adobe terms: use in the project, but not shared as files)
+web/assets/people/
