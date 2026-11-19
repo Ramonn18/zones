@@ -8,6 +8,7 @@ import Vision
 final class NativeCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
   private let session = AVCaptureSession(), queue = DispatchQueue(label: "zones.camera"), context = CIContext()
   private var lastSent = 0.0
+  private var lastPicture = 0.0 // the picture itself goes about 10 times a second; Vision's findings with every frame
   var busy = false // the page is still taking the last frame
   // jpeg (base64), the full picture's width and height, and what Vision saw in it (JSON: people's
   // outline as a maskW x maskH grid of 0..255 in base64, and hands' joints)
@@ -54,12 +55,17 @@ final class NativeCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     let now = CACurrentMediaTime()
     guard !busy, now - lastSent > 1.0 / 24, let pixels = CMSampleBufferGetImageBuffer(buffer) else { return }
     lastSent = now
-    let w = CVPixelBufferGetWidth(pixels), h = CVPixelBufferGetHeight(pixels), scale = min(1, 1280 / CGFloat(w))
-    let image = CIImage(cvPixelBuffer: pixels).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-    guard let jpeg = context.jpegRepresentation(of: image, colorSpace: CGColorSpaceCreateDeviceRGB(),
-      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.65]) else { return }
+    let w = CVPixelBufferGetWidth(pixels), h = CVPixelBufferGetHeight(pixels)
+    var picture = "" // empty: no new picture this time, only what Vision found
+    if now - lastPicture > 0.095 {
+      lastPicture = now
+      let scale = min(1, 1280 / CGFloat(w))
+      let image = CIImage(cvPixelBuffer: pixels).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      if let jpeg = context.jpegRepresentation(of: image, colorSpace: CGColorSpaceCreateDeviceRGB(),
+        options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.65]) { picture = jpeg.base64EncodedString() }
+    }
     busy = true
-    onFrame?(jpeg.base64EncodedString(), w, h, seen(pixels))
+    onFrame?(picture, w, h, seen(pixels))
   }
 
   // What Vision finds in the picture, as JSON for the page: { mask: { w, h, data }, hands: [...] }.

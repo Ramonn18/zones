@@ -367,7 +367,7 @@ if (SIM) startSim();
 
 // ---- The camera: the app sends frames (its own capture); a browser uses the camera directly ----
 const CAMERA_KEY = "zones-corner-camera", camCanvas = $("camera"), cam = camCanvas.getContext("2d");
-let video = null, picture = null, pictureSize = null;
+let video = null, picture = null, pictureSize = null, lastDecode = 0;
 let peopleMask = null; // where people are in the camera's picture, from the app (Apple Vision)
 let seenHands = null;  // and their hands' joints
 let frameNo = 0;       // counts the app's camera frames as they arrive
@@ -392,9 +392,15 @@ if (IN_APP) {
   };
   // seen: what Apple Vision found in the frame: { mask: { w, h, data (base64) }, hands: [...] }
   window.zonesFrame = (jpeg, w, h, seen) => {
+    // The picture is only shown small (and read while calibrating), so it's decoded at most about
+    // 10 times a second; Vision's findings (below) still arrive with every frame.
+    const at0 = performance.now();
+    if (jpeg && (calibrating || at0 - lastDecode > 95)) {
+    lastDecode = at0;
     const img = new Image(); // shown only once it's decoded, so the picture is never half there
     img.onload = () => { picture = img; pictureSize = { w, h }; frameNo++; };
     img.src = `data:image/jpeg;base64,${jpeg}`;
+    }
     const m = seen?.mask, at = performance.now();
     if (m) peopleMask = { w: m.w, h: m.h, data: Uint8Array.from(atob(m.data), ch => ch.charCodeAt(0)), at };
     if (seen) seenHands = { hands: seen.hands || [], at };
@@ -580,6 +586,7 @@ $("walkBtn").addEventListener("click", () => {
 });
 
 const presence = createPresence(), steadyPointer = createPointer();
+let lastPreview = 0;
 let moves = {}, lastTick = performance.now(), aim = null, handsStatus = "", autoCalibrated = false;
 // Each frame: where people are on the corner, and where the drawings go to make way.
 function people(dt) {
@@ -637,6 +644,10 @@ function frame() {
     $("huntStatus").textContent = (huntPaused ? "Paused (touches are ignored) · " : "") +
       (state.hunt.finished ? "Treasure found! Starting over soon." : (clueOf(state.hunt) ? `Find ${clueOf(state.hunt)} (hides the ${next.id})` : `Next: ${next.name.toLowerCase()} (${next.id})`) + ` · step ${state.hunt.step + 1} of ${SCENES.length}`);
   }
+  // The preview and the camera view are drawn 15 times a second (the projector window draws the
+  // real picture); hands, people and the hunt above still update every frame.
+  if (now - lastPreview < 1000 / 15 - 2 && !sim) return requestAnimationFrame(frame);
+  lastPreview = now;
   projection.draw(state);
   if (sim) {
     sim.project(preview); // the simulated projector shows exactly what the real one would

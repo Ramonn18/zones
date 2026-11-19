@@ -8,6 +8,8 @@ import rough from "../vendor/rough/rough.esm.js";
 
 const BOIL = 8;       // new wobble this many times a second
 const SEEDS = 6;      // wobbles to cycle through (each is worked out once, then reused)
+const CACHE_MAX = 4000; // worked-out wobbles kept; past that, the oldest are dropped (pop-ins and
+                        // bounces draw at ever-new sizes, which would otherwise pile up in memory)
 
 // The art used, by name: [library, file].
 export const ART = {
@@ -69,6 +71,7 @@ export function createArtist(ctx, art) {
       const opts = { stroke: color, strokeWidth: line / k, roughness, bowing: 0.6, seed: 1 + frame * 101 + seed * 7, disableMultiStroke: true, preserveVertices: true };
       drawables = a.parts.map(d => gen.path(d, opts));
       cache.set(key, drawables);
+      if (cache.size > CACHE_MAX) for (const old of cache.keys()) { cache.delete(old); if (cache.size <= CACHE_MAX * 0.8) break; }
     }
     ctx.save();
     ctx.translate(x, y);

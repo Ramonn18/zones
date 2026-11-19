@@ -38,13 +38,18 @@ window.addEventListener("keydown", e => {
 });
 // In Zones.app the picture is put full screen on the projector by the app itself.
 setTimeout(() => help.classList.add("gone"), navigator.userAgent.includes("ZonesApp") ? 0 : 12000);
-function frame() {
+// 30 frames a second is plenty for chalk drawings that wobble 8 times a second, and half the work.
+const FRAME_MS = 1000 / 30;
+let lastDrawn = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (now - lastDrawn < FRAME_MS - 2) return;
+  lastDrawn = now;
   const dpr = window.devicePixelRatio || 1, w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; hello(); }
   projection.draw(state);
   frames++;
   if (performance.now() - counted > 1000) { fps = Math.round(frames * 1000 / (performance.now() - counted)); frames = 0; counted = performance.now(); }
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 </script>
