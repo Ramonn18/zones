@@ -3,6 +3,7 @@
 // experience without the projector: what lands on the walls, what the camera sees, and touching
 // the walls (a click in the player's view stands in for a hand).
 import * as THREE from "three";
+import { GLTFLoader } from "../vendor/three/addons/loaders/GLTFLoader.js";
 import { buildRoom, v3 } from "./room3d.js";
 import { LENSES, cornerFrame } from "./room1.js";
 import { cornerToProj } from "./corner.js";
@@ -52,46 +53,150 @@ export function createCornerSim(model) {
   eyes.position.copy(v3(model.player.at.x, model.player.at.y, model.player.at.z));
   eyes.lookAt(v3(P.aim.x, P.aim.y, P.aim.z - 10));
 
-  // A person who can walk into the room: a simple figure (about 176 cm) that blocks the projector's
-  // light like a body does. A copy of them in plain white, in a scene of their own, is what the
-  // iPhone's person detection would find: their outline in its picture.
+  // A person who can walk into the room, blocking the projector's light like a body does: Remy,
+  // a Mixamo character (assets/people/remy.glb, made by tools/convert-people.html), who idles, walks
+  // and points. Until he loads (or without the file), a simple figure of capsules stands in.
+  // The iPhone's person detection is simulated by drawing him plain white on black from its view.
   const fold = cornerFrame(model, { left: { width: 0 } }).fold;
-  const figure = (material) => {
-    const g = new THREE.Group(), part = (geo, x, y, z, sx = 1, sz = 1) => {
-      const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); m.scale.set(sx, 1, sz); m.castShadow = m.receiveShadow = true; g.add(m);
-    };
+  const HEIGHT = 176; // cm
+  const holder = new THREE.Group(); // where the person stands and which way they face
+  holder.visible = false;
+  scene.add(holder);
+  const PERSON_LAYER = 1;
+  const capsules = (() => {
+    const g = new THREE.Group(), material = new THREE.MeshStandardMaterial({ color: "#3b4a6b", roughness: 0.8 });
+    const part = (geo, x, y, z, sx = 1, sz = 1) => { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); m.scale.set(sx, 1, sz); g.add(m); };
     part(new THREE.CapsuleGeometry(7, 70, 4, 12), -9, 42, 0);           // legs
     part(new THREE.CapsuleGeometry(7, 70, 4, 12), 9, 42, 0);
     part(new THREE.CapsuleGeometry(17, 40, 4, 16), 0, 112, 0, 1, 0.6);  // body
     part(new THREE.CapsuleGeometry(5, 52, 4, 10), -24, 108, 0);         // arms
     part(new THREE.CapsuleGeometry(5, 52, 4, 10), 24, 108, 0);
     part(new THREE.SphereGeometry(11, 20, 16), 0, 160, 0);              // head
-    g.visible = false;
     return g;
-  };
-  const person = figure(new THREE.MeshStandardMaterial({ color: "#3b4a6b", roughness: 0.8 }));
-  const outline = figure(new THREE.MeshBasicMaterial({ color: "#ffffff" }));
-  const maskScene = new THREE.Scene();
-  maskScene.background = new THREE.Color("#000000");
-  scene.add(person);
-  maskScene.add(outline);
-  // where: a spot on the floor (room space, cm), or null for no one. They face the corner.
-  function setPerson(where) {
-    for (const g of [person, outline]) {
-      g.visible = !!where;
-      if (!where) continue;
-      g.position.copy(v3(where.x, where.y, 0));
-      g.rotation.y = Math.atan2(fold.x - where.x, fold.y - where.y);
+  })();
+  const dress = g => g.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; o.layers.enable(PERSON_LAYER); } });
+  dress(capsules);
+  holder.add(capsules);
+
+  // Remy, once loaded: his bones by name, an animation mixer, and his three moves.
+  let remy = null, mixer = null, actions = {}, bones = {}, pointAt = 0, reach = 60;
+  new GLTFLoader().load(new URL("../assets/people/remy.glb", import.meta.url).href, gltf => {
+    const m = gltf.scene, box = new THREE.Box3().setFromObject(m), k = HEIGHT / (box.max.y - box.min.y);
+    m.scale.setScalar(k);
+    m.position.y = -box.min.y * k;
+    dress(m);
+    m.traverse(o => { if (o.isBone) bones[o.name.replace(/^mixamorig:?/, "")] = o; });
+    mixer = new THREE.AnimationMixer(m);
+    for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
+    // The moment in the pointing animation where the arm is out furthest: held there while pointing.
+    const point = actions.pointing;
+    if (point) {
+      point.play(); let best = 0;
+      for (let t = 0; t <= point.getClip().duration; t += 0.05) {
+        mixer.setTime(t); m.updateMatrixWorld(true);
+        const reach = bones.RightArm.getWorldPosition(new THREE.Vector3()).distanceTo(bones.RightHandIndex4?.getWorldPosition(new THREE.Vector3()) || bones.RightHand.getWorldPosition(new THREE.Vector3()));
+        if (reach > best) { best = reach; pointAt = t; }
+      }
+      reach = best;
+      point.stop();
+    }
+    holder.remove(capsules);
+    holder.add(m);
+    remy = m;
+  }, undefined, () => console.info("No assets/people/remy.glb: the simulated person stays a simple figure."));
+
+  // where: a spot on the floor (room space, cm), or null for no one. pose: "walk", "stand" or
+  // "point"; aim: when pointing, the room point (cm) they point at (otherwise they face the corner).
+  // how: "aim" points the finger at it; "shadow" holds the fingertip where, seen from the iPhone on
+  // the projector, it covers that point (where the fingertip's shadow falls on it).
+  let current = { where: null, pose: "stand", aim: null, how: "aim" }, playing = null, clock = performance.now();
+  function setPerson(where, pose = "stand", aim = null, how = "aim") {
+    current = { where, pose, aim, how };
+    holder.visible = !!where;
+    if (!where) return;
+    holder.position.copy(v3(where.x, where.y, 0));
+    const look = aim || fold;
+    holder.rotation.y = Math.atan2(look.x - where.x, look.y - where.y);
+  }
+  // Moves the person's animation on to now, and aims a pointing arm.
+  function update() {
+    const now = performance.now(), dt = Math.min(0.1, (now - clock) / 1000);
+    clock = now;
+    if (!remy || !holder.visible) return;
+    const name = current.pose === "walk" ? "walking" : current.pose === "point" ? "pointing" : "idle", next = actions[name];
+    if (next && playing !== next) {
+      next.reset().play();
+      if (playing) next.crossFadeFrom(playing, 0.3, false);
+      playing = next;
+    }
+    if (name === "pointing") { mixer.update(0); mixer.setTime(pointAt); } else mixer.update(dt);
+    if (current.pose === "point" && current.aim) {
+      const goal = v3(current.aim.x, current.aim.y, current.aim.z);
+      aimArm(current.how === "shadow" ? shadowSpot(goal) : goal);
     }
   }
+  // Where the fingertip must be for its shadow to fall on `goal`: on the line from the iPhone to it,
+  // at arm's length from the shoulder (the nearer the wall of the two such spots), or as close as
+  // the arm gets to that line.
+  function shadowSpot(goal) {
+    remy.updateMatrixWorld(true);
+    const S = bones.RightArm.getWorldPosition(new THREE.Vector3()), C = phone.position, D = goal.clone().sub(C).normalize();
+    const f = C.clone().sub(S), b = f.dot(D), disc = b * b - (f.lengthSq() - reach * reach);
+    const t = disc >= 0 ? -b + Math.sqrt(disc) : -b; // (no reach: the line's nearest point to the shoulder)
+    return C.clone().add(D.multiplyScalar(t));
+  }
+  // A good spot to stand to point at a wall point (room cm) by its shadow: in front of it, toward
+  // the projector, and a step to the left of the projector's line so the right hand is in the light.
+  function standFor(aim) {
+    const ax = aim.x, ay = aim.y, cx = P.at.x, cy = P.at.y, d = Math.hypot(cx - ax, cy - ay) || 1, ux = (cx - ax) / d, uy = (cy - ay) / d;
+    return { x: ax + ux * 70 - uy * 32, y: ay + uy * 70 + ux * 32 };
+  }
+  // Turns the right arm at the shoulder so the index finger lines up with the target.
+  function aimArm(target) {
+    const arm = bones.RightArm, tip = bones.RightHandIndex4 || bones.RightHand;
+    if (!arm || !tip) return;
+    for (let k = 0; k < 3; k++) {
+      remy.updateMatrixWorld(true);
+      const s = arm.getWorldPosition(new THREE.Vector3()), t = tip.getWorldPosition(new THREE.Vector3());
+      const turn = new THREE.Quaternion().setFromUnitVectors(t.sub(s).normalize(), target.clone().sub(s).normalize());
+      const world = arm.getWorldQuaternion(new THREE.Quaternion()), parent = arm.parent.getWorldQuaternion(new THREE.Quaternion());
+      arm.quaternion.copy(parent.invert().multiply(turn.multiply(world)));
+    }
+    remy.updateMatrixWorld(true);
+  }
+
+  // The pointing hand's joints as Apple Vision would report them from the iPhone: in its picture
+  // (0..1, y down), named as Zones.app sends them. Empty unless the person is pointing.
+  const JOINTS = { wrist: "RightHand", indexMCP: "RightHandIndex1", indexPIP: "RightHandIndex2", indexTip: "RightHandIndex4",
+    middleMCP: "RightHandMiddle1", middleTip: "RightHandMiddle4", ringTip: "RightHandRing4", littleTip: "RightHandPinky4" };
+  function hands() {
+    if (!remy || !holder.visible || current.pose !== "point") return [];
+    remy.updateMatrixWorld(true);
+    const hand = {};
+    for (const [name, bone] of Object.entries(JOINTS)) {
+      if (!bones[bone]) continue;
+      const p = bones[bone].getWorldPosition(new THREE.Vector3()).project(phone);
+      hand[name] = [(p.x + 1) / 2, (1 - p.y) / 2];
+    }
+    // A pointing hand: the other fingers curl in (the animation's are only partly curled).
+    const w = hand.wrist, m = hand.indexMCP;
+    const mm = hand.middleMCP || m;
+    if (w && mm) for (const f of ["middleTip", "ringTip", "littleTip"]) hand[f] = [w[0] + (mm[0] - w[0]) * 0.7, w[1] + (mm[1] - w[1]) * 0.7];
+    return [hand];
+  }
+
   const MW = 160, MH = 90, target = new THREE.WebGLRenderTarget(MW, MH), rgba = new Uint8Array(MW * MH * 4), mask = { w: MW, h: MH, data: new Uint8Array(MW * MH) };
+  const white = new THREE.MeshBasicMaterial({ color: "#ffffff" }), black = new THREE.Color("#000000");
   // The person's outline in the iPhone's picture, as Apple Vision would give it (0..255 over a small grid).
   function personMask() {
-    if (!person.visible) { mask.data.fill(0); return mask; }
+    if (!holder.visible) { mask.data.fill(0); return mask; }
+    const background = scene.background;
+    scene.background = black; scene.overrideMaterial = white; phone.layers.set(PERSON_LAYER);
     renderer.setRenderTarget(target);
-    renderer.render(maskScene, phone);
+    renderer.render(scene, phone);
     renderer.readRenderTargetPixels(target, 0, 0, MW, MH, rgba);
     renderer.setRenderTarget(null);
+    scene.background = background; scene.overrideMaterial = null; phone.layers.set(0);
     for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) mask.data[y * MW + x] = rgba[((MH - 1 - y) * MW + x) * 4]; // rows come bottom up
     return mask;
   }
@@ -128,7 +233,7 @@ export function createCornerSim(model) {
   const raycaster = new THREE.Raycaster();
   function touch(corner, viewPoint) {
     raycaster.setFromCamera(new THREE.Vector2(viewPoint.x * 2 - 1, 1 - viewPoint.y * 2), eyes);
-    const hit = raycaster.intersectObjects(scene.children, false).find(h => h.object !== body && h.object !== person);
+    const hit = raycaster.intersectObjects(scene.children, false).find(h => h.object !== body && h.object !== holder);
     if (!hit) return null;
     const q = { x: hit.point.x, y: hit.point.z, z: hit.point.y }; // back to room space
     const c = cornerFrame(model, corner).fromRoom(q);
@@ -142,7 +247,10 @@ export function createCornerSim(model) {
     project,
     playerView() { renderer.render(scene, eyes); return renderer.domElement; },
     cameraView() { renderer.render(scene, phone); return renderer.domElement; },
-    exactPins, touch, fitError, setPerson, personMask, cameraPoint,
+    exactPins, touch, fitError, setPerson, personMask, cameraPoint, update, hands, standFor,
+    // A corner point (cm) in room space (cm), for pointing at.
+    toRoom: (corner, p) => cornerFrame(model, corner).toRoom(p),
+    get personReady() { return !!remy; },
     // Where a corner point should land in the picture, for checking the fit.
     check: (corner, p, aspect) => ({ exact: toPicture(cornerFrame(model, corner).toRoom(p), aspect), pinned: cornerToProj(corner, p) }),
   };

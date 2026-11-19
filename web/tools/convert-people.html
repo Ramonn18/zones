@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zones · people converter</title>
+<!-- Turns the Mixamo downloads in assets/people (a character and its animations, each a big FBX
+     with the whole character inside) into one small GLB for the simulation: the character once,
+     its animations as clips, its texture shrunk. Open it while a save server is listening on
+     localhost:8011 (see the README), or it offers the file as a download. -->
+<script type="importmap">{ "imports": { "three": "../vendor/three/three.module.js" } }</script>
+<pre id="log">Converting…</pre>
+<script type="module">
+import * as THREE from "three";
+import { FBXLoader } from "../vendor/three/addons/loaders/FBXLoader.js";
+import { GLTFExporter } from "../vendor/three/addons/exporters/GLTFExporter.js";
+import { mergeVertices } from "../vendor/three/addons/utils/BufferGeometryUtils.js";
+
+const log = t => { document.getElementById("log").textContent += "\n" + t; console.log(t); };
+const params = new URLSearchParams(location.search);
+const character = params.get("character") || "Remy", clips = (params.get("clips") || "Idle,Walking,Pointing").split(",");
+const loader = new FBXLoader();
+const load = name => new Promise((ok, fail) => loader.load(`../assets/people/${name}.fbx`, ok, undefined, fail));
+
+// A texture redrawn at most `max` pixels across, so the file stays small.
+function shrink(tex, max = 1024) {
+  const img = tex?.image;
+  if (!img || !img.width) return tex;
+  const k = Math.min(1, max / Math.max(img.width, img.height));
+  const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  const t = new THREE.CanvasTexture(c);
+  t.userData.mimeType = "image/jpeg"; // much smaller than PNG in the file t.colorSpace = tex.colorSpace; t.flipY = tex.flipY; t.wrapS = tex.wrapS; t.wrapT = tex.wrapT;
+  return t;
+}
+
+const person = await load(character);
+log(`${character}: ${person.children.length} parts`);
+// Let its embedded textures decode.
+const textures = [];
+person.traverse(o => o.isMesh && [].concat(o.material).forEach(m => m.map && textures.push(m.map)));
+for (let i = 0; i < 100 && textures.some(t => !t.image?.width); i++) await new Promise(r => setTimeout(r, 100));
+log(`${textures.length} textures: ${textures.map(t => `${t.image?.width}x${t.image?.height}`).join(", ")}`);
+person.traverse(o => {
+  if (!o.isMesh) return;
+  // FBX gives each triangle its own corners: share the ones that are the same (a third the size).
+  const before = o.geometry.attributes.position.count;
+  o.geometry = mergeVertices(o.geometry);
+  log(`  ${o.name}: ${before} → ${o.geometry.attributes.position.count} corners`);
+  const mats = Array.isArray(o.material) ? o.material : [o.material];
+  const out = mats.map(m => new THREE.MeshStandardMaterial({ name: m.name, map: shrink(m.map), color: m.map ? 0xffffff : m.color, roughness: 0.8 }));
+  o.material = Array.isArray(o.material) ? out : out[0];
+});
+person.animations = [];
+for (const name of clips) {
+  const anim = await load(name);
+  const clip = [...anim.animations].sort((a, b) => b.tracks.length - a.tracks.length)[0]; // (some have an empty first take)
+  if (!clip) { log(`${name}: no animation in it`); continue; }
+  clip.name = name.toLowerCase();
+  // The simulation moves the person itself: keep the hips' height, drop their travel across the floor.
+  const hips = clip.tracks.find(t => /Hips\.position$/.test(t.name));
+  if (hips) for (let i = 0; i < hips.values.length; i += 3) { hips.values[i] = hips.values[0]; hips.values[i + 2] = hips.values[2]; }
+  person.animations.push(clip);
+  log(`${name}: ${clip.duration.toFixed(2)} s, ${clip.tracks.length} tracks`);
+}
+const box = new THREE.Box3().setFromObject(person);
+log(`height ${(box.max.y - box.min.y).toFixed(1)} (cm)`);
+const glb = await new GLTFExporter().parseAsync(person, { binary: true, animations: person.animations, maxTextureSize: 1024 });
+log(`GLB: ${(glb.byteLength / 1e6).toFixed(1)} MB`);
+const name = `${character.toLowerCase()}.glb`;
+try {
+  const r = await fetch(`http://localhost:8011/save?name=${encodeURIComponent(name)}`, { method: "POST", body: glb });
+  log(r.ok ? `saved assets/people/${name}` : `save server said ${r.status}`);
+} catch {
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([glb])), download: name });
+  a.click(); log(`no save server: offered ${name} as a download`);
+}
+log("DONE");
+</script>

@@ -89,7 +89,7 @@
       <h2>People</h2>
       <p class="hint">The camera finds people in front of the corner (Apple Vision, in Zones.app). The mural keeps its light off them, and its drawings move out of their way and gather around them. First, show the camera where the walls are: with everyone out of the picture, calibrate (the projector flashes 18 dots, about 20 seconds).</p>
       <div class="row"><button id="calibrate">Calibrate the camera to the walls</button></div>
-      <div class="row" style="margin-top:6px"><button id="makeWay">Make way for people</button><button id="showPeople" class="on">Show what it sees</button><button id="walkBtn" hidden>A person walks in</button></div>
+      <div class="row" style="margin-top:6px"><button id="makeWay">Make way for people</button><button id="showPeople" class="on">Show what it sees</button><button id="walkBtn" hidden>A person walks in</button><button id="pointBtn" hidden title="The simulated person steps up and points at what's to be found next, through the real hand tracking">Point at the next one</button></div>
       <div class="row" style="margin-top:6px"><button id="pointMode" title="How a pointing finger picks a drawing">Pointing: finger's shadow</button></div>
       <div class="status" id="calibStatus"></div>
       <div class="status" id="peopleStatus"></div>
@@ -345,13 +345,14 @@ async function startSim() {
   const { createCornerSim } = await import("./src/cornerSim.js");
   sim ||= createCornerSim(ROOM1);
   $("roomFigure").hidden = false;
-  $("exactBtn").hidden = $("walkBtn").hidden = false;
+  $("exactBtn").hidden = $("walkBtn").hidden = $("pointBtn").hidden = false;
   $("simBtn").classList.add("on");
   $("camCaption").textContent = "Camera, simulated: the iPhone on top of the projector";
 }
 $("simBtn").addEventListener("click", () => {
   if (!sim || $("roomFigure").hidden) return startSim();
-  $("roomFigure").hidden = $("exactBtn").hidden = $("walkBtn").hidden = true; // back to the real room (the simulation stays ready)
+  $("roomFigure").hidden = $("exactBtn").hidden = $("walkBtn").hidden = $("pointBtn").hidden = true; // back to the real room (the simulation stays ready)
+  simPointing = false; $("pointBtn").classList.remove("on");
   $("simBtn").classList.remove("on");
   walkSince = 0; $("walkBtn").classList.remove("on"); sim.setPerson(null);
   $("camCaption").textContent = "Camera (the iPhone, on top of the projector)";
@@ -577,20 +578,45 @@ let walkSince = 0;
 const WALK = [{ t: 0, x: 105, y: 40 }, { t: 4, x: 90, y: -95 }, { t: 9, x: 90, y: -95 }, { t: 13, x: 105, y: 40 }, { t: 15, x: 105, y: 40 }];
 function walker(now) {
   const t = ((now - walkSince) / 1000) % WALK[WALK.length - 1].t, k = WALK.findIndex(p => p.t > t), a = WALK[k - 1], b = WALK[k], f = (t - a.t) / (b.t - a.t);
-  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, moving: a.x !== b.x || a.y !== b.y };
 }
 $("walkBtn").addEventListener("click", () => {
   walkSince = walkSince ? 0 : performance.now();
+  simPointing = false; $("pointBtn").classList.remove("on");
   $("walkBtn").classList.toggle("on", !!walkSince);
   if (!walkSince) sim?.setPerson(null);
 });
+// The simulated person points at what's to be found next (the compass, then each hidden one), from
+// in front of the corner, to the side so the camera on the projector sees their hand.
+let simPointing = false;
+const POINT_FROM = { x: 70, y: -70 };
+$("pointBtn").addEventListener("click", () => {
+  simPointing = !simPointing; walkSince = 0; $("walkBtn").classList.remove("on");
+  $("pointBtn").classList.toggle("on", simPointing);
+  if (!simPointing) sim?.setPerson(null);
+});
+// The target on the walls (cm), or null; and where the person aims to get the cursor onto it,
+// corrected bit by bit by how far the cursor is off, the way a player watches the crosshair.
+let simAim = null, simAimFor = null;
+function simTarget() {
+  const id = SCENES[state.hunt.step]?.id, p = pickables(state.hunt, moves, Date.now()).find(q => q.id === id);
+  if (!p) return null;
+  if (simAimFor !== id) { simAim = { x: p.x, y: p.y }; simAimFor = id; }
+  if (aim?.cursor && state.output.pointing !== "aim") { simAim.x += (p.x - aim.cursor.x) * 0.12; simAim.y += (p.y - aim.cursor.y) * 0.12; }
+  return { target: sim.toRoom(state.corner, p), aimAt: sim.toRoom(state.corner, state.output.pointing === "aim" ? p : simAim) };
+}
 
 const presence = createPresence(), steadyPointer = createPointer();
 let lastPreview = 0;
 let moves = {}, lastTick = performance.now(), aim = null, handsStatus = "", autoCalibrated = false;
 // Each frame: where people are on the corner, and where the drawings go to make way.
 function people(dt) {
-  if (sim && walkSince) sim.setPerson(walker(performance.now()));
+  if (sim && walkSince) { const w = walker(performance.now()); sim.setPerson(w, w.moving ? "walk" : "stand"); }
+  if (sim && simPointing) {
+    const t = simTarget();
+    sim.setPerson(t ? sim.standFor(t.target) : POINT_FROM, t ? "point" : "stand", t?.aimAt, state.output.pointing === "aim" ? "aim" : "shadow");
+  }
+  if (sim) { sim.update(); if (simPointing) seenHands = { hands: sim.hands(), at: performance.now() }; }
   const mask = sim ? sim.personMask() : peopleMask && performance.now() - peopleMask.at < 1000 ? peopleMask : null;
   const fresh = state.cameraFit && !state.cameraFit.failed;
   const field = mask && fresh && state.output.makeWay && state.mode === "play" && !state.calib ? presence.update(mask, state.cameraFit, state.corner, dt) : null;
@@ -614,6 +640,7 @@ function people(dt) {
     !fresh ? "Calibrate first, so the camera's picture maps onto the walls" :
     !state.output.makeWay ? "Making way is off" :
     state.mode !== "play" ? "Making way works in Pirate hunt" :
+    !field ? "Paused while the camera calibrates" :
     field.area > 0.002 ? `A person covers ${Math.round(field.area * 100)}% of the corner · ${moving} drawings making way` :
     moving ? "Drawings drifting home" : "No one in front of the corner";
   $("handsStatus").textContent = IN_APP || seenHands ? handsStatus : "";

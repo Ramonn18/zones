@@ -280,16 +280,18 @@ export function makeWay(objects, field, c, moves, dt, hold = null) {
 // fingers are folded in.
 const pt = (h, k) => h[k] && { x: h[k][0], y: h[k][1] };
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// Seen from the projector, a player pointing at the wall points away from the camera, so the
+// finger can look very short: it's judged against the hand itself, not the picture.
 export function isPointing(h) {
   const wrist = pt(h, "wrist"), mcp = pt(h, "indexMCP"), pip = pt(h, "indexPIP"), tip = pt(h, "indexTip");
-  if (!mcp || !tip || dist(mcp, tip) < 0.01) return false;
-  if (pip) { // the index finger is straight
+  if (!mcp || !tip || dist(mcp, tip) < 0.002) return false;
+  if (pip && dist(mcp, tip) > 0.02) { // the index finger is straight (when it's long enough to tell)
     const a = { x: pip.x - mcp.x, y: pip.y - mcp.y }, b = { x: tip.x - pip.x, y: tip.y - pip.y };
     if ((a.x * b.x + a.y * b.y) / (Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y) || 1) < 0.7) return false;
   }
   if (wrist) { // and reaches well past the other fingers, which are folded
     const reach = dist(wrist, tip);
-    for (const k of ["middleTip", "ringTip", "littleTip"]) { const f = pt(h, k); if (f && dist(wrist, f) > reach * 0.8) return false; }
+    for (const k of ["middleTip", "ringTip", "littleTip"]) { const f = pt(h, k); if (f && dist(wrist, f) > reach * 0.85) return false; }
   }
   return true;
 }
@@ -342,6 +344,7 @@ function oneEuro(minCutoff, beta, dCutoff = 1) {
 }
 
 const HOLD_S = 0.35;  // a pointing hand lost for less than this is still pointing (Vision misses frames)
+const SIDE_ON = 0.06;  // a hand's wrist-to-fingertip length (fraction of the picture) when seen side on
 const REACH_CM = 12;   // the shadow cursor sits this far (on the wall) out ahead of the fingertip, along the finger,
                       // so it's clear of the hand and arm (which make the drawings move away)
 
@@ -351,8 +354,8 @@ const REACH_CM = 12;   // the shadow cursor sits this far (on the wall) out ahea
 // the cursor is a little way out ahead of that, along the finger: put it on a drawing to pick it. mode "aim": along the finger, as aimOf.
 // update({ hands, fit, c, t (seconds), mode, picks }) returns { mode, cursor, from, to, scene } or null.
 export function createPointer() {
-  let fx, fy, fdx, fdy, lastTip = null, lastSeen = -Infinity, last = null;
-  const reset = () => { fx = oneEuro(1.0, 0.03); fy = oneEuro(1.0, 0.03); fdx = oneEuro(1.5, 0.3); fdy = oneEuro(1.5, 0.3); lastTip = null; last = null; };
+  let fx, fy, fdx, fdy, fwx, fwy, fhl, lastTip = null, lastSeen = -Infinity, last = null;
+  const reset = () => { fx = oneEuro(1.0, 0.03); fy = oneEuro(1.0, 0.03); fdx = oneEuro(1.5, 0.3); fdy = oneEuro(1.5, 0.3); fwx = oneEuro(1.5, 0.3); fwy = oneEuro(1.5, 0.3); fhl = oneEuro(1, 0.1); lastTip = null; last = null; };
   reset();
   return function update({ hands, fit, c, t, mode = "shadow", picks = [] }) {
     if (!fit) { reset(); return null; }
@@ -374,10 +377,14 @@ export function createPointer() {
       last = a && { mode, cursor: null, ...a };
       return last;
     }
-    const shadow = cameraToCorner(fit, c, sTip), ahead = cameraToCorner(fit, c, { x: sTip.x + dx * len, y: sTip.y + dy * len });
+    // Out ahead of the fingertip along the hand (wrist to fingertip: longer, so steadier, than the
+    // finger alone), the full reach for a hand seen side on, less as it points away from the
+    // camera; pointing straight at the wall, the fingertip's own shadow is already on the spot.
+    const wrist = pt(hand, "wrist") || mcp, hl = dist(wrist, tip), hx = fwx((tip.x - wrist.x) / (hl || 1), t), hy = fwy((tip.y - wrist.y) / (hl || 1), t);
+    const shadow = cameraToCorner(fit, c, sTip), ahead = cameraToCorner(fit, c, { x: sTip.x + hx * 0.05, y: sTip.y + hy * 0.05 });
     if (!shadow || !ahead) { last = null; return null; }
-    const wl = dist(shadow, ahead) || 1, W = c.left.width + c.right.width;
-    const cursor = { x: Math.min(W, Math.max(0, shadow.x + (ahead.x - shadow.x) / wl * REACH_CM)), y: Math.min(c.height, Math.max(0, shadow.y + (ahead.y - shadow.y) / wl * REACH_CM)) };
+    const wl = dist(shadow, ahead) || 1, W = c.left.width + c.right.width, out = REACH_CM * Math.min(1, fhl(hl, t) / SIDE_ON);
+    const cursor = { x: Math.min(W, Math.max(0, shadow.x + (ahead.x - shadow.x) / wl * out)), y: Math.min(c.height, Math.max(0, shadow.y + (ahead.y - shadow.y) / wl * out)) };
     const over = picks.filter(p => dist(p, cursor) < p.r).sort((a, b) => dist(a, cursor) - dist(b, cursor))[0];
     last = { mode, cursor, from: null, to: null, scene: over?.id || null };
     return last;
